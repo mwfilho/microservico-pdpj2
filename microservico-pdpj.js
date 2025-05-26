@@ -1,8 +1,8 @@
 // microservico-pdpj.js
-// ---------------------------------------------
-// Microserviço CommonJS que obtém token PDPJ
-// via Password Grant ou, em fallback, Puppeteer + PKCE/localStorage
-// ---------------------------------------------
+// --------------------------------------------------
+// 1) Password Grant (pje-tjpe-1g-cloud)
+// 2) Fallback: Puppeteer → login → interceptar /api/v2/processos
+// --------------------------------------------------
 
 require('dotenv').config();
 const express   = require('express');
@@ -11,14 +11,15 @@ const qs        = require('querystring');
 const chromium  = require('@sparticuz/chromium');
 const puppeteer = require('puppeteer-core');
 
-const USER = process.env.PJE_USER;
-const PASS = process.env.PJE_PASS;
-const PORT = process.env.PORT || 3000;
+const USER      = process.env.PJE_USER;
+const PASS      = process.env.PJE_PASS;
+const PORT      = process.env.PORT || 3000;
 
-// Endpoint do Keycloak
-const TOKEN_URL = 'https://sso.cloud.pje.jus.br/auth/realms/pje/protocol/openid-connect/token';
+// URLs fixas
+const KEYCLOAK_TOKEN_URL = 'https://sso.cloud.pje.jus.br/auth/realms/pje/protocol/openid-connect/token';
+const PROC_API_BASE      = 'https://portaldeservicos.pdpj.jus.br/api/v2/processos';
+const SPA_CONSULTA_URL   = 'https://portaldeservicos.pdpj.jus.br/consulta';
 
-// Checa variáveis
 if (!USER || !PASS) {
   console.error('❌ Defina PJE_USER e PJE_PASS nas variáveis de ambiente.');
   process.exit(1);
@@ -27,29 +28,29 @@ if (!USER || !PASS) {
 const app = express();
 
 app.get('/token', async (_req, res) => {
-  // 1) Tenta password grant
+  // --- 1) PASSWORD GRANT ---
   try {
     const resp = await axios.post(
-      TOKEN_URL,
+      KEYCLOAK_TOKEN_URL,
       qs.stringify({
-        grant_type: 'password',
-        client_id: 'pje-tjpe-1g-cloud',
-        username: USER,
-        password: PASS,
-        scope: 'openid'
+        grant_type:  'password',
+        client_id:   'pje-tjpe-1g-cloud',
+        username:    USER,
+        password:    PASS,
+        scope:       'openid',
       }),
       { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
     );
     if (resp.data?.access_token) {
-      console.log('✅ Token via password grant');
+      console.log('✅ Token obtido via password grant');
       return res.json({ access_token: resp.data.access_token });
     }
   } catch (err) {
     console.warn('⚠️ Password grant falhou:', err.response?.data || err.message);
-    // segue para Puppeteer
+    // Segue para fallback
   }
 
-  // 2) Fallback Puppeteer + varredura de localStorage
+  // --- 2) FALLBACK PUPPETEER + INTERCEPTAÇÃO DE REQUISIÇÃO ---
   let browser;
   try {
     browser = await puppeteer.launch({
@@ -60,7 +61,19 @@ app.get('/token', async (_req, res) => {
     });
     const page = await browser.newPage();
 
-    // 2.1) Login
+    // Intercepta qualquer requisição à API de processos para pegar o Bearer
+    let capturedToken = null;
+    page.on('request', req => {
+      const url = req.url();
+      if (url.startsWith(PROC_API_BASE)) {
+        const auth = req.headers()['authorization'];
+        if (typeof auth === 'string' && auth.startsWith('Bearer ')) {
+          capturedToken = auth.replace('Bearer ', '');
+        }
+      }
+    });
+
+    // 2.1) Login no PJe-TJPE
     await page.goto('https://pje.cloud.tjpe.jus.br/1g/login.seam', { waitUntil: 'networkidle2' });
     const userInput = await page.waitForSelector('input[type="text"]',   { timeout: 10000 });
     const passInput = await page.waitForSelector('input[type="password"]', { timeout: 10000 });
@@ -73,27 +86,24 @@ app.get('/token', async (_req, res) => {
       submitBtn.click(),
     ]);
 
-    // 2.2) Vai ao PDPJ (caso não redirecione direto)
-    await page.goto('https://portaldeservicos.pdpj.jus.br', { waitUntil: 'networkidle2' });
-
-    // 2.3) Varre localStorage procurando um JSON com `access_token`
-    const token = await page.evaluate(() => {
-      for (let i = 0; i < localStorage.length; i++) {
-        const key = localStorage.key(i);
-        try {
-          const val = localStorage.getItem(key);
-          const obj = JSON.parse(val);
-          if (obj && typeof obj === 'object' && obj.access_token) {
-            return obj.access_token;
-          }
-        } catch {}  // não é JSON ou sem access_token
-      }
-      return null;
+    // 2.2) Navega à página de consulta (isso dispara a chamada XHR que leva o token)
+    //      Usa um número genérico – a API vai retornar erro 404, mas já terá enviado o Bearer.
+    const dummyNumero = '00000000000000000000';
+    await page.goto(`${SPA_CONSULTA_URL}?numeroProcesso=${dummyNumero}`, {
+      waitUntil: 'networkidle2',
     });
 
-    if (!token) throw new Error('access_token não encontrado em localStorage');
-    console.log('✅ Token via Puppeteer');
-    return res.json({ access_token: token });
+    // 2.3) Aguarda até capturar a request à /api/v2/processos
+    await page.waitForRequest(
+      req => req.url().startsWith(PROC_API_BASE) && !!capturedToken,
+      { timeout: 10000 }
+    );
+
+    if (!capturedToken) {
+      throw new Error('Token não capturado na requisição de consulta');
+    }
+    console.log('✅ Token obtido por interceptação Puppeteer');
+    return res.json({ access_token: capturedToken });
 
   } catch (err) {
     console.error('❌ Falha no fallback Puppeteer:', err.message);
@@ -105,9 +115,9 @@ app.get('/token', async (_req, res) => {
 
 // Health-check
 app.get('/', (_req, res) => {
-  res.send('🚀 Microserviço PDPJ online. GET /token');
+  res.send('🚀 Microserviço PDPJ online. GET /token retorna o token.');
 });
 
-app.listen(PORT, () =>
-  console.log(`✅ Microserviço PDPJ escutando na porta ${PORT}`)
-);
+app.listen(PORT, () => {
+  console.log(`✅ Microserviço PDPJ escutando na porta ${PORT}`);
+});
