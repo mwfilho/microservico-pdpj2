@@ -3,7 +3,6 @@
   "version": "1.0.0",
   "description": "Microserviço que automatiza o login no PJe e expõe o token do Portal PDPJ",
   "main": "microservico-pdpj.js",
-  "type": "module",
   "scripts": {
     "start": "node microservico-pdpj.js"
   },
