@@ -1,48 +1,82 @@
-// microservico-pdpj.js
-// Microserviço para logar no PJe, redirecionar ao PDPJ e expor o token JWT
+// microservico-pdpj.js — versão leve (puppeteer-core + @sparticuz/chromium)
+// ---------------------------------------------------------------------------
+// 1. Faz login no PJe (TJPE) com CPF/senha
+// 2. Abre o Portal PDPJ
+// 3. Extrai o access_token do localStorage
+// 4. Responde em GET /token com { access_token }
+//
+// Variáveis de ambiente obrigatórias:
+//   PJE_USER  – seu CPF/login no PJe
+//   PJE_PASS  – sua senha do PJe
+// ---------------------------------------------------------------------------
 
-const express = require('express');
-const puppeteer = require('puppeteer');
-const dotenv = require('dotenv');
-
-dotenv.config();
-const app = express();
-const PORT = process.env.PORT || 3000;
+require('dotenv').config();
+const express   = require('express');
+const chromium  = require('@sparticuz/chromium');
+const puppeteer = require('puppeteer-core');
+const axios     = require('axios');          // (útil se quiser expandir futuramente)
 
 const USER = process.env.PJE_USER;
 const PASS = process.env.PJE_PASS;
+const PORT = process.env.PORT || 3000;
 
-app.get('/token', async (req, res) => {
-  const browser = await puppeteer.launch({
-    headless: 'new',
-    args: ['--no-sandbox', '--disable-setuid-sandbox']
-  });
-  const page = await browser.newPage();
+if (!USER || !PASS) {
+  console.error('\n❌  Defina PJE_USER e PJE_PASS nas variáveis de ambiente.');
+  process.exit(1);
+}
 
+const app = express();
+
+// ────────────────────────────────────────────────────────────────────────────
+// Rota principal: GET /token  →  { access_token: "eyJ..." }
+// ────────────────────────────────────────────────────────────────────────────
+app.get('/token', async (_req, res) => {
+  let browser;
   try {
-    await page.goto('https://pje.cloud.tjpe.jus.br/1g/login.seam', { waitUntil: 'networkidle2' });
-    await page.type('#loginApplication\\:username', USER);
-    await page.type('#loginApplication\\:password', PASS);
-    await page.click('#loginApplication\\:loginButton');
-    await page.waitForNavigation({ waitUntil: 'networkidle2' });
-
-    await page.goto('https://portaldeservicos.pdpj.jus.br', { waitUntil: 'networkidle2' });
-
-    const token = await page.evaluate(() => {
-      return localStorage.getItem('access_token') || null;
+    browser = await puppeteer.launch({
+      args: [...chromium.args, '--no-sandbox', '--disable-setuid-sandbox'],
+      defaultViewport: chromium.defaultViewport,
+      executablePath: await chromium.executablePath(),
+      headless: chromium.headless,
     });
 
-    if (!token) throw new Error('Token não encontrado no localStorage.');
+    const page = await browser.newPage();
+
+    // 1️⃣ Login no PJe-TJPE
+    await page.goto('https://pje.cloud.tjpe.jus.br/1g/login.seam', {
+      waitUntil: 'networkidle2',
+    });
+    await page.type('#loginApplication\\:username', USER, { delay: 30 });
+    await page.type('#loginApplication\\:password', PASS, { delay: 30 });
+    await page.click('#loginApplication\\:loginButton');
+
+    // 2️⃣ Aguarda conclusão do login/redirecionamento
+    await page.waitForNavigation({ waitUntil: 'networkidle2' });
+
+    // 3️⃣ Abre o Portal PDPJ (caso o redirecionamento não tenha levado direto)
+    await page.goto('https://portaldeservicos.pdpj.jus.br', {
+      waitUntil: 'networkidle2',
+    });
+
+    // 4️⃣ Extrai o token do localStorage do portal
+    const token = await page.evaluate(() => localStorage.getItem('access_token'));
+
+    if (!token) throw new Error('access_token não encontrado no localStorage');
 
     res.json({ access_token: token });
   } catch (err) {
-    console.error('Erro ao extrair token:', err);
+    console.error('Erro ao obter token:', err.message);
     res.status(500).json({ error: 'Falha ao obter token', details: err.message });
   } finally {
-    await browser.close();
+    if (browser) await browser.close();
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`Microserviço PDPJ rodando na porta ${PORT}`);
-});
+// rota simples para ping
+app.get('/', (_req, res) =>
+  res.send('🚀 Microserviço PDPJ online. Acesse /token para obter o access_token.')
+);
+
+app.listen(PORT, () =>
+  console.log(`✅ Microserviço PDPJ escutando na porta ${PORT}`)
+);
