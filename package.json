@@ -1,15 +1,20 @@
 {
   "name": "microservico-pdpj",
   "version": "1.0.0",
-  "description": "Microserviço que automatiza o login no PJe e extrai token do PDPJ",
+  "description": "Microserviço que automatiza o login no PJe e expõe o token do Portal PDPJ",
   "main": "microservico-pdpj.js",
+  "type": "module",
   "scripts": {
     "start": "node microservico-pdpj.js"
   },
+  "engines": {
+    "node": ">=18"
+  },
   "dependencies": {
+    "express": "^4.18.2",
     "axios": "^1.6.0",
     "dotenv": "^16.3.1",
-    "express": "^4.18.2",
-    "puppeteer": "^21.3.8"
+    "puppeteer-core": "^21.3.8",
+    "@sparticuz/chromium": "^120.0.0"
   }
 }
