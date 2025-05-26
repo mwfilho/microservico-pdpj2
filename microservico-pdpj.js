@@ -1,26 +1,24 @@
 // microservico-pdpj.js
 // ---------------------------------------------
 // Microserviço CommonJS que obtém token PDPJ
-// via Authorization Code + PKCE no Keycloak
+// via Password Grant ou, em fallback, Puppeteer + PKCE/localStorage
 // ---------------------------------------------
 
 require('dotenv').config();
 const express   = require('express');
 const axios     = require('axios');
 const qs        = require('querystring');
-const crypto    = require('crypto');
 const chromium  = require('@sparticuz/chromium');
 const puppeteer = require('puppeteer-core');
 
-const USER        = process.env.PJE_USER;
-const PASS        = process.env.PJE_PASS;
-const PORT        = process.env.PORT || 3000;
+const USER = process.env.PJE_USER;
+const PASS = process.env.PJE_PASS;
+const PORT = process.env.PORT || 3000;
 
-// Configurações fixas
-const REALM_URL   = 'https://sso.cloud.pje.jus.br/auth/realms/pje';
-const CLIENT_ID   = 'portalexterno-frontend';
-const REDIRECT_URI= 'https://portaldeservicos.pdpj.jus.br';
+// Endpoint do Keycloak
+const TOKEN_URL = 'https://sso.cloud.pje.jus.br/auth/realms/pje/protocol/openid-connect/token';
 
+// Checa variáveis
 if (!USER || !PASS) {
   console.error('❌ Defina PJE_USER e PJE_PASS nas variáveis de ambiente.');
   process.exit(1);
@@ -28,34 +26,32 @@ if (!USER || !PASS) {
 
 const app = express();
 
-// Utilitário PKCE
-function base64URLEncode(buffer) {
-  return buffer.toString('base64')
-    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-}
-function sha256(buffer) {
-  return crypto.createHash('sha256').update(buffer).digest();
-}
-
 app.get('/token', async (_req, res) => {
+  // 1) Tenta password grant
+  try {
+    const resp = await axios.post(
+      TOKEN_URL,
+      qs.stringify({
+        grant_type: 'password',
+        client_id: 'pje-tjpe-1g-cloud',
+        username: USER,
+        password: PASS,
+        scope: 'openid'
+      }),
+      { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
+    );
+    if (resp.data?.access_token) {
+      console.log('✅ Token via password grant');
+      return res.json({ access_token: resp.data.access_token });
+    }
+  } catch (err) {
+    console.warn('⚠️ Password grant falhou:', err.response?.data || err.message);
+    // segue para Puppeteer
+  }
+
+  // 2) Fallback Puppeteer + varredura de localStorage
   let browser;
   try {
-    // 1) Gera PKCE
-    const codeVerifier  = base64URLEncode(crypto.randomBytes(32));
-    const codeChallenge = base64URLEncode(sha256(codeVerifier));
-    const state         = base64URLEncode(crypto.randomBytes(16));
-
-    // 2) Constrói URL de autorização
-    const authUrl = `${REALM_URL}/protocol/openid-connect/auth`
-      + `?response_type=code`
-      + `&client_id=${CLIENT_ID}`
-      + `&redirect_uri=${encodeURIComponent(REDIRECT_URI)}`
-      + `&scope=openid`
-      + `&code_challenge=${codeChallenge}`
-      + `&code_challenge_method=S256`
-      + `&state=${state}`;
-
-    // 3) Inicia browser headless e navega ao Keycloak
     browser = await puppeteer.launch({
       args: [...chromium.args, '--no-sandbox', '--disable-setuid-sandbox'],
       defaultViewport: chromium.defaultViewport,
@@ -63,63 +59,55 @@ app.get('/token', async (_req, res) => {
       headless: chromium.headless,
     });
     const page = await browser.newPage();
-    await page.goto(authUrl, { waitUntil: 'networkidle2' });
 
-    // 4) Faz login (seletor genérico)
-    const userInput = await page.waitForSelector('input[type="text"]', { timeout: 10000 });
-    await userInput.click({ clickCount: 3 });
-    await userInput.type(USER, { delay: 30 });
-
+    // 2.1) Login
+    await page.goto('https://pje.cloud.tjpe.jus.br/1g/login.seam', { waitUntil: 'networkidle2' });
+    const userInput = await page.waitForSelector('input[type="text"]',   { timeout: 10000 });
     const passInput = await page.waitForSelector('input[type="password"]', { timeout: 10000 });
-    await passInput.click({ clickCount: 3 });
-    await passInput.type(PASS, { delay: 30 });
-
+    await userInput.click({ clickCount: 3 }); await userInput.type(USER, { delay: 20 });
+    await passInput.click({ clickCount: 3 }); await passInput.type(PASS, { delay: 20 });
     const submitBtn = await page.$('button[type="submit"], input[type="submit"]');
     if (!submitBtn) throw new Error('Botão de login não encontrado');
-    // Espera o redirect com code
     await Promise.all([
       page.waitForNavigation({ waitUntil: 'networkidle2' }),
       submitBtn.click(),
     ]);
 
-    // 5) Captura o `code` da URL de redirect
-    const redirectUrl = page.url();
-    const m = redirectUrl.match(/[?&]code=([^&]+)/);
-    if (!m) throw new Error('Parâmetro code não encontrado na URL de redirect');
-    const code = m[1];
+    // 2.2) Vai ao PDPJ (caso não redirecione direto)
+    await page.goto('https://portaldeservicos.pdpj.jus.br', { waitUntil: 'networkidle2' });
 
-    // 6) Troca code por token no Keycloak
-    const tokenResponse = await axios.post(
-      `${REALM_URL}/protocol/openid-connect/token`,
-      qs.stringify({
-        grant_type:    'authorization_code',
-        client_id:     CLIENT_ID,
-        code:          code,
-        redirect_uri:  REDIRECT_URI,
-        code_verifier: codeVerifier,
-      }),
-      { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
-    );
+    // 2.3) Varre localStorage procurando um JSON com `access_token`
+    const token = await page.evaluate(() => {
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        try {
+          const val = localStorage.getItem(key);
+          const obj = JSON.parse(val);
+          if (obj && typeof obj === 'object' && obj.access_token) {
+            return obj.access_token;
+          }
+        } catch {}  // não é JSON ou sem access_token
+      }
+      return null;
+    });
 
-    if (!tokenResponse.data || !tokenResponse.data.access_token) {
-      throw new Error('Token não retornado pelo Keycloak');
-    }
+    if (!token) throw new Error('access_token não encontrado em localStorage');
+    console.log('✅ Token via Puppeteer');
+    return res.json({ access_token: token });
 
-    // 7) Retorna o access_token
-    return res.json({ access_token: tokenResponse.data.access_token });
   } catch (err) {
-    console.error('❌ Erro ao obter token:', err.message);
+    console.error('❌ Falha no fallback Puppeteer:', err.message);
     return res.status(500).json({ error: 'Falha ao obter token', details: err.message });
   } finally {
     if (browser) await browser.close();
   }
 });
 
-// Health check
+// Health-check
 app.get('/', (_req, res) => {
-  res.send('🚀 Microserviço PDPJ online. Use GET /token para obter token.');
+  res.send('🚀 Microserviço PDPJ online. GET /token');
 });
 
-app.listen(PORT, () => {
-  console.log(`✅ Microserviço PDPJ escutando na porta ${PORT}`);
-});
+app.listen(PORT, () =>
+  console.log(`✅ Microserviço PDPJ escutando na porta ${PORT}`)
+);
