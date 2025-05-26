@@ -1,8 +1,12 @@
 // microservico-pdpj.js
-// Microserviço leve em CommonJS para extrair token do PDPJ via login no PJe-TJPE
+// Tenta primeiro ROPC (password grant) no Keycloak PJe/TJPE
+// Se falhar, abre um browser headless para login e extrai token do localStorage.
+// CommonJS + Express + Axios + Puppeteer-Core + @sparticuz/chromium
 
 require('dotenv').config();
 const express   = require('express');
+const axios     = require('axios');
+const qs        = require('querystring');
 const chromium  = require('@sparticuz/chromium');
 const puppeteer = require('puppeteer-core');
 
@@ -18,61 +22,82 @@ if (!USER || !PASS) {
 const app = express();
 
 app.get('/token', async (_req, res) => {
+  // 1) Tentar direto Resource-Owner Password Credentials
+  try {
+    const resp = await axios.post(
+      'https://sso.cloud.pje.jus.br/auth/realms/pje/protocol/openid-connect/token',
+      qs.stringify({
+        grant_type: 'password',
+        client_id: 'pje-tjpe-1g-cloud',
+        username: USER,
+        password: PASS,
+        scope: 'openid',
+      }),
+      { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
+    );
+    if (resp.data && resp.data.access_token) {
+      console.log('✅ Token obtido via password grant');
+      return res.json({ access_token: resp.data.access_token });
+    }
+  } catch (err) {
+    console.warn('⚠️ Password grant falhou:', err.response?.data || err.message);
+    // segue para fallback
+  }
+
+  // 2) Fallback: Puppeteer + login no SPA
   let browser;
   try {
-    // Inicia o Chromium via puppeteer-core + sparticuz/chromium
     browser = await puppeteer.launch({
       args: [...chromium.args, '--no-sandbox', '--disable-setuid-sandbox'],
       defaultViewport: chromium.defaultViewport,
       executablePath: await chromium.executablePath(),
       headless: chromium.headless,
     });
-
     const page = await browser.newPage();
 
-    // 1) Login no PJe-TJPE (seletor genérico)
-    await page.goto('https://pje.cloud.tjpe.jus.br/1g/login.seam', { waitUntil: 'networkidle2' });
-
-    // Campo de usuário
+    // 2.1) Login no PJe-TJPE (seletor genérico)
+    await page.goto('https://pje.cloud.tjpe.jus.br/1g/login.seam', {
+      waitUntil: 'networkidle2',
+    });
     const userInput = await page.waitForSelector('input[type="text"]', { timeout: 10000 });
     await userInput.click({ clickCount: 3 });
     await userInput.type(USER, { delay: 30 });
 
-    // Campo de senha
     const passInput = await page.waitForSelector('input[type="password"]', { timeout: 10000 });
     await passInput.click({ clickCount: 3 });
     await passInput.type(PASS, { delay: 30 });
 
-    // Botão de submit
     const submitBtn = await page.$('button[type="submit"], input[type="submit"]');
     if (!submitBtn) throw new Error('Botão de login não encontrado');
-    await submitBtn.click();
+    await Promise.all([
+      page.waitForNavigation({ waitUntil: 'networkidle2' }),
+      submitBtn.click(),
+    ]);
 
-    // Aguarda redirecionamento
-    await page.waitForNavigation({ waitUntil: 'networkidle2' });
+    // 2.2) Navega ao Portal PDPJ
+    await page.goto('https://portaldeservicos.pdpj.jus.br', {
+      waitUntil: 'networkidle2',
+    });
 
-    // 2) Acessa o Portal PDPJ
-    await page.goto('https://portaldeservicos.pdpj.jus.br', { waitUntil: 'networkidle2' });
-
-    // 3) Extrai o token do localStorage
-    const token = await page.evaluate(() => window.localStorage.getItem('access_token'));
+    // 2.3) Extrai o token do localStorage
+    const token = await page.evaluate(() => localStorage.getItem('access_token'));
     if (!token) throw new Error('access_token não encontrado no localStorage');
 
-    // 4) Retorna o token
-    res.json({ access_token: token });
+    console.log('✅ Token obtido via Puppeteer');
+    return res.json({ access_token: token });
   } catch (err) {
-    console.error('Erro ao obter token:', err.message);
-    res.status(500).json({ error: 'Falha ao obter token', details: err.message });
+    console.error('❌ Erro no fallback Puppeteer:', err.message);
+    return res.status(500).json({ error: 'Falha ao obter token', details: err.message });
   } finally {
     if (browser) await browser.close();
   }
 });
 
-// Rota de health check
+// health check
 app.get('/', (_req, res) => {
-  res.send('🚀 Microserviço PDPJ online. Use GET /token para obter o access_token.');
+  res.send('🚀 Microserviço PDPJ online. GET /token para acessar token.');
 });
 
-app.listen(PORT, () => {
-  console.log(`✅ Microserviço PDPJ escutando na porta ${PORT}`);
-});
+app.listen(PORT, () =>
+  console.log(`✅ Microserviço PDPJ escutando na porta ${PORT}`)
+);
