@@ -1,4 +1,3 @@
-
 const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 const { createLogger } = require('../utils/logger');
@@ -83,165 +82,230 @@ class PDPJAuthService {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
 
+  // Função segura para executar operações na página
+  async safeEvaluate(func, defaultValue = null, description = '') {
+    try {
+      const result = await this.page.evaluate(func);
+      this.logger.info(`✅ ${description} executado com sucesso:`, result);
+      return result;
+    } catch (error) {
+      this.logger.error(`❌ Erro em ${description}:`, error.message);
+      return defaultValue;
+    }
+  }
+
+  // Função segura para obter propriedades da página
+  async safePageProperty(property, description = '') {
+    try {
+      let result;
+      switch (property) {
+        case 'url':
+          result = this.page.url();
+          break;
+        case 'title':
+          result = await this.page.title();
+          break;
+        case 'content':
+          result = await this.page.content();
+          break;
+        default:
+          result = 'Propriedade não reconhecida';
+      }
+      this.logger.info(`✅ ${description} obtido:`, result || 'VAZIO');
+      return result;
+    } catch (error) {
+      this.logger.error(`❌ Erro ao obter ${description}:`, error.message);
+      return null;
+    }
+  }
+
   async authenticate(username, password) {
     try {
-      this.logger.info('Iniciando autenticação para usuário:', username);
+      this.logger.info('🚀 === ULTRA DEBUG INICIADO ===');
+      this.logger.info('📅 Timestamp:', new Date().toISOString());
+      this.logger.info('👤 Usuário:', username);
+      this.logger.info('🔧 Configuração:', JSON.stringify(this.config, null, 2));
       
-      // Navegar para a página de login do PJe
-      this.logger.info('🌐 Navegando para:', `${this.config.pjeUrl}/pje/login.seam`);
-      
-      const response = await this.page.goto(`${this.config.pjeUrl}/pje/login.seam`, {
-        waitUntil: 'networkidle2',
-        timeout: this.config.timeout
-      });
-
-      // === DEBUG MELHORADO ===
-      this.logger.info('=== INICIANDO DEBUG MELHORADO ===');
-      
-      // Status da resposta HTTP
-      this.logger.info('🔥 Status HTTP:', response?.status() || 'N/A');
-      
-      // URL atual com valor
-      const currentUrl = this.page.url();
-      this.logger.info('🌐 URL atual:', currentUrl);
-
-      // Aguardar página carregar
-      await this.delay(5000);
-      
-      // Título da página com tratamento de erro
+      // PASSO 1: Verificar se página existe
+      this.logger.info('🔍 PASSO 1: Verificando página...');
       try {
-        const title = await this.page.title();
-        this.logger.info('📄 Título da página:', title || 'TÍTULO VAZIO');
-      } catch (e) {
-        this.logger.error('❌ Erro ao obter título:', e.message);
+        const pageExists = !!this.page;
+        this.logger.info('📄 Página existe:', pageExists);
+        
+        if (!pageExists) {
+          throw new Error('Página não foi criada corretamente');
+        }
+      } catch (error) {
+        this.logger.error('❌ Erro no PASSO 1:', error.message);
+        throw error;
       }
       
-      // URL após delay
-      const urlAfterDelay = this.page.url();
-      this.logger.info('🔄 URL após delay:', urlAfterDelay);
+      // PASSO 2: Tentar navegação com timeout mais baixo
+      const targetUrl = `${this.config.pjeUrl}/pje/login.seam`;
+      this.logger.info('🌐 PASSO 2: Navegando para:', targetUrl);
       
-      // Verificar se houve redirect
-      if (currentUrl !== urlAfterDelay) {
-        this.logger.info('🔀 REDIRECT DETECTADO!');
-      }
-      
-      // Capturar HTML da página (primeiros 1000 chars)
+      let response = null;
       try {
-        const htmlContent = await this.page.content();
-        this.logger.info('📝 HTML (1000 chars):', htmlContent.substring(0, 1000));
-      } catch (e) {
-        this.logger.error('❌ Erro ao obter HTML:', e.message);
-      }
-      
-      // Verificar se página carregou
-      try {
-        const bodyExists = await this.page.$('body');
-        this.logger.info('🎯 Body existe:', !!bodyExists);
-      } catch (e) {
-        this.logger.error('❌ Erro ao verificar body:', e.message);
-      }
-      
-      // Conteúdo visível da página
-      try {
-        const bodyText = await this.page.evaluate(() => {
-          return document.body ? document.body.innerText.substring(0, 500) : 'BODY NÃO ENCONTRADO';
+        this.logger.info('⏳ Iniciando navegação...');
+        
+        response = await this.page.goto(targetUrl, {
+          waitUntil: 'networkidle2',
+          timeout: 30000 // Timeout reduzido para 30s
         });
-        this.logger.info('📖 Texto visível (500 chars):', bodyText);
-      } catch (e) {
-        this.logger.error('❌ Erro ao obter texto:', e.message);
-      }
-      
-      // Verificar inputs com mais detalhes
-      try {
-        const inputs = await this.page.$$eval('input', els => 
-          els.map(el => ({
-            name: el.name || 'N/A',
-            id: el.id || 'N/A',
-            type: el.type || 'N/A',
-            placeholder: el.placeholder || 'N/A',
-            class: el.className || 'N/A',
-            value: el.value || 'N/A'
-          }))
-        );
-        this.logger.info('🔍 Total de inputs:', inputs.length);
-        this.logger.info('📋 Inputs detalhados:', JSON.stringify(inputs, null, 2));
-      } catch (e) {
-        this.logger.error('❌ Erro ao obter inputs:', e.message);
-      }
-      
-      // Verificar todos os elementos form
-      try {
-        const forms = await this.page.$$eval('form', els => 
-          els.map(el => ({
-            action: el.action || 'N/A',
-            method: el.method || 'N/A',
-            id: el.id || 'N/A',
-            class: el.className || 'N/A'
-          }))
-        );
-        this.logger.info('📝 Total de forms:', forms.length);
-        this.logger.info('📋 Forms encontrados:', JSON.stringify(forms, null, 2));
-      } catch (e) {
-        this.logger.error('❌ Erro ao obter forms:', e.message);
-      }
-      
-      // Verificar frames
-      const frames = await this.page.frames();
-      this.logger.info('🖼️ Total de frames:', frames.length);
-      
-      if (frames.length > 1) {
-        for (let i = 0; i < frames.length; i++) {
-          try {
-            const frameUrl = frames[i].url();
-            this.logger.info(`🖼️ Frame ${i}:`, frameUrl);
-          } catch (e) {
-            this.logger.info(`🖼️ Frame ${i}: Erro ao obter URL`);
-          }
-        }
-      }
-      
-      // Verificar se há mensagens de erro na página
-      try {
-        const errorMessages = await this.page.$$eval('.error, .alert-danger, .message-error', els => 
-          els.map(el => el.textContent)
-        );
-        if (errorMessages.length > 0) {
-          this.logger.info('⚠️ Mensagens de erro encontradas:', errorMessages);
-        }
-      } catch (e) {
-        // Sem elementos de erro
-      }
-      
-      // Tentar seletores alternativos
-      const possibleSelectors = [
-        'input[name="username"]',
-        'input[id="username"]', 
-        'input[name="login"]',
-        'input[id="login"]',
-        'input[name="user"]',
-        'input[type="text"]',
-        'input[placeholder*="usuário"]',
-        'input[placeholder*="CPF"]',
-        'input[name="j_username"]',
-        'input[id="j_username"]'
-      ];
-      
-      this.logger.info('🔍 Testando seletores...');
-      for (const selector of possibleSelectors) {
+        
+        this.logger.info('✅ Navegação concluída!');
+        
+      } catch (error) {
+        this.logger.error('❌ Erro na navegação:', error.message);
+        this.logger.error('🔍 Tipo do erro:', error.name);
+        this.logger.error('📋 Stack:', error.stack);
+        
+        // Tentar navegação alternativa
+        this.logger.info('🔄 Tentando navegação alternativa...');
         try {
-          const found = await this.page.$(selector);
-          this.logger.info(`✅ Seletor ${selector}:`, found ? 'ENCONTRADO' : 'NÃO ENCONTRADO');
-        } catch (e) {
-          this.logger.info(`❌ Seletor ${selector}: ERRO -`, e.message);
+          response = await this.page.goto(targetUrl, {
+            waitUntil: 'load',
+            timeout: 20000
+          });
+          this.logger.info('✅ Navegação alternativa funcionou!');
+        } catch (altError) {
+          this.logger.error('❌ Navegação alternativa também falhou:', altError.message);
         }
       }
       
-      // === FIM DEBUG MELHORADO ===
+      // PASSO 3: Verificar resposta HTTP
+      this.logger.info('🔍 PASSO 3: Verificando resposta HTTP...');
+      if (response) {
+        try {
+          const status = response.status();
+          const statusText = response.statusText();
+          const headers = response.headers();
+          
+          this.logger.info('📊 Status HTTP:', status);
+          this.logger.info('📝 Status Text:', statusText);
+          this.logger.info('📋 Headers importantes:', {
+            'content-type': headers['content-type'],
+            'location': headers['location'],
+            'set-cookie': headers['set-cookie']
+          });
+          
+        } catch (error) {
+          this.logger.error('❌ Erro ao verificar resposta:', error.message);
+        }
+      } else {
+        this.logger.error('❌ Resposta é nula!');
+      }
       
-      throw new Error('🛑 DEBUG CONCLUÍDO - Parando execução para análise');
+      // PASSO 4: Aguardar e verificar URL atual
+      this.logger.info('🔍 PASSO 4: Verificando estado da página...');
+      await this.delay(3000);
+      
+      const currentUrl = await this.safePageProperty('url', 'URL atual');
+      
+      if (currentUrl && currentUrl !== targetUrl) {
+        this.logger.info('🔀 REDIRECT detectado!');
+        this.logger.info('🎯 URL original:', targetUrl);
+        this.logger.info('🎯 URL atual:', currentUrl);
+      }
+      
+      // PASSO 5: Verificar título
+      this.logger.info('🔍 PASSO 5: Verificando título...');
+      const title = await this.safePageProperty('title', 'Título da página');
+      
+      // PASSO 6: Verificar conteúdo HTML
+      this.logger.info('🔍 PASSO 6: Verificando HTML...');
+      const htmlContent = await this.safePageProperty('content', 'Conteúdo HTML');
+      
+      if (htmlContent) {
+        const htmlLength = htmlContent.length;
+        this.logger.info('📏 Tamanho do HTML:', htmlLength, 'caracteres');
+        
+        if (htmlLength > 0) {
+          this.logger.info('📝 HTML (primeiros 1000 chars):', htmlContent.substring(0, 1000));
+          
+          // Verificar se contém elementos de login
+          const hasLogin = htmlContent.toLowerCase().includes('login') || 
+                          htmlContent.toLowerCase().includes('usuario') ||
+                          htmlContent.toLowerCase().includes('senha');
+          this.logger.info('🔐 Contém elementos de login:', hasLogin);
+          
+        } else {
+          this.logger.error('❌ HTML está vazio!');
+        }
+      } else {
+        this.logger.error('❌ Não foi possível obter HTML!');
+      }
+      
+      // PASSO 7: Verificar DOM
+      this.logger.info('🔍 PASSO 7: Verificando DOM...');
+      
+      const domInfo = await this.safeEvaluate(() => {
+        return {
+          hasBody: !!document.body,
+          bodyChildren: document.body ? document.body.children.length : 0,
+          docReadyState: document.readyState,
+          docTitle: document.title,
+          url: window.location.href
+        };
+      }, {}, 'Informações do DOM');
+      
+      // PASSO 8: Contar elementos
+      this.logger.info('🔍 PASSO 8: Contando elementos...');
+      
+      const elementCounts = await this.safeEvaluate(() => {
+        return {
+          inputs: document.querySelectorAll('input').length,
+          buttons: document.querySelectorAll('button').length,
+          forms: document.querySelectorAll('form').length,
+          links: document.querySelectorAll('a').length,
+          divs: document.querySelectorAll('div').length,
+          scripts: document.querySelectorAll('script').length,
+          allElements: document.querySelectorAll('*').length
+        };
+      }, {}, 'Contagem de elementos');
+      
+      // PASSO 9: Verificar console errors
+      this.logger.info('🔍 PASSO 9: Verificando erros do console...');
+      
+      // Configurar listener para erros do console
+      this.page.on('console', (msg) => {
+        if (msg.type() === 'error') {
+          this.logger.error('🚨 Console Error:', msg.text());
+        }
+      });
+      
+      this.page.on('pageerror', (error) => {
+        this.logger.error('🚨 Page Error:', error.message);
+      });
+      
+      // PASSO 10: Verificar network failures
+      this.logger.info('🔍 PASSO 10: Configurando monitoramento de rede...');
+      
+      this.page.on('requestfailed', (request) => {
+        this.logger.error('🌐 Request Failed:', {
+          url: request.url(),
+          method: request.method(),
+          failure: request.failure()?.errorText
+        });
+      });
+      
+      this.page.on('response', (response) => {
+        if (response.status() >= 400) {
+          this.logger.error('🚨 HTTP Error Response:', {
+            url: response.url(),
+            status: response.status(),
+            statusText: response.statusText()
+          });
+        }
+      });
+      
+      this.logger.info('🏁 === ULTRA DEBUG CONCLUÍDO ===');
+      
+      // Parar aqui para análise completa
+      throw new Error('🛑 ULTRA DEBUG CONCLUÍDO - Análise completa dos logs necessária');
 
     } catch (error) {
-      this.logger.error('Erro durante autenticação:', error);
+      this.logger.error('💥 Erro durante ultra debug:', error);
       throw error;
     }
   }
