@@ -1,3 +1,4 @@
+
 const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 const { createLogger } = require('../utils/logger');
@@ -337,41 +338,162 @@ class PDPJAuthService {
         }
       }
 
-      // Aguardar navegação ou resposta
+      // ============================================================================
+      // TIMEOUT DINÂMICO CORRIGIDO
+      // ============================================================================
       this.logger.info('⏳ Aguardando resposta do login...');
       
+      let loginResult = null;
       try {
-        await Promise.race([
-          this.page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 }),
-          this.page.waitForSelector('.error, .alert-danger, .message-error', { timeout: 5000 })
-        ]);
-      } catch (e) {
-        // Timeout é normal, continuar
+          loginResult = await Promise.race([
+              // OPÇÃO 1: Aguardar redirecionamento (LOGIN SUCESSO)
+              this.page.waitForFunction(
+                  (loginUrl) => window.location.href !== loginUrl,
+                  { timeout: 15000 },
+                  this.config.pjeLoginUrl // ✅ CORRIGIDO
+              ).then(() => ({ status: 'redirected', url: this.page.url() })),
+              
+              // OPÇÃO 2: Aguardar mensagem de erro aparecer
+              this.page.waitForSelector('.error, .alert, [class*="error"], [id*="error"], .message', { 
+                  timeout: 15000,
+                  visible: true 
+              }).then(async (errorElement) => {
+                  const errorText = await errorElement.textContent();
+                  return { status: 'error', message: errorText.trim() };
+              }),
+              
+              // OPÇÃO 3: Aguardar qualquer mudança no DOM (fallback)
+              this.page.waitForFunction(
+                  () => document.readyState === 'complete',
+                  { timeout: 15000 }
+              ).then(() => ({ status: 'completed', url: this.page.url() }))
+          ]);
+          
+          this.logger.info('🎯 Resultado do login:', loginResult); // ✅ CORRIGIDO
+          
+      } catch (timeoutError) {
+          this.logger.warn('⏰ Timeout aguardando resposta do login'); // ✅ CORRIGIDO
+          loginResult = { status: 'timeout', url: this.page.url() };
       }
-
-      await this.delay(3000);
-
-      // Verificar se login foi bem-sucedido
-      const currentUrl = this.page.url();
-      this.logger.info('🌐 URL após login:', currentUrl);
-
-      const isLoginSuccessful = await this.checkLoginSuccess();
       
-      if (!isLoginSuccessful) {
-        // Verificar se há mensagens de erro
-        const errorMessages = await this.page.$$eval('.error, .alert-danger, .message-error', els => 
-          els.map(el => el.textContent.trim()).filter(text => text.length > 0)
-        );
-        
-        if (errorMessages.length > 0) {
-          this.logger.error('❌ Erro de login:', errorMessages);
-          throw new Error(`Falha no login: ${errorMessages.join(', ')}`);
-        }
-        
-        throw new Error('Login não foi bem-sucedido - ainda na página de login');
-      }
+      // ANÁLISE DETALHADA DA RESPOSTA
+      const currentUrl = this.page.url(); // ✅ CORRIGIDO
+      this.logger.info('🌐 URL após login:', { url: currentUrl });
 
-      this.logger.info('✅ Login bem-sucedido!');
+      // Se ainda na página de login, capturar detalhes do erro
+      if (currentUrl === this.config.pjeLoginUrl || currentUrl.includes('login.seam')) { // ✅ CORRIGIDO
+          
+          // CAPTURAR MENSAGENS DE ERRO
+          const errorMessages = await this.page.evaluate(() => { // ✅ CORRIGIDO
+              const selectors = [
+                  '.error', '.alert', '.message', '.warning',
+                  '[class*="error"]', '[class*="alert"]',
+                  '[id*="error"]', '[id*="message"]',
+                  '.validation-message', '.field-error',
+                  '.ui-messages-error', '.ui-messages-warn'
+              ];
+              
+              const messages = [];
+              selectors.forEach(selector => {
+                  const elements = document.querySelectorAll(selector);
+                  elements.forEach(el => {
+                      const text = el.textContent.trim();
+                      if (text && text.length > 0) {
+                          messages.push({ 
+                              selector, 
+                              text,
+                              visible: el.offsetParent !== null
+                          });
+                      }
+                  });
+              });
+              
+              return messages;
+          });
+          
+          if (errorMessages.length > 0) {
+              this.logger.error('📄 Mensagens de erro encontradas:', { errorMessages }); // ✅ CORRIGIDO
+          }
+          
+          // VERIFICAR CAPTCHA
+          const captchaExists = await this.page.evaluate(() => { // ✅ CORRIGIDO
+              const captchaSelectors = [
+                  '.captcha', '[id*="captcha"]', '[class*="captcha"]',
+                  '.recaptcha', '.g-recaptcha',
+                  'iframe[src*="recaptcha"]',
+                  'canvas', 'img[src*="captcha"]',
+                  '[data-sitekey]'
+              ];
+              
+              const found = [];
+              captchaSelectors.forEach(selector => {
+                  const element = document.querySelector(selector);
+                  if (element) {
+                      found.push({
+                          selector,
+                          visible: element.offsetParent !== null,
+                          text: element.textContent?.trim() || 'N/A'
+                      });
+                  }
+              });
+              
+              return found;
+          });
+          
+          if (captchaExists.length > 0) {
+              this.logger.warn('🤖 CAPTCHA detectado:', { captchaExists }); // ✅ CORRIGIDO
+          }
+          
+          // VERIFICAR CAMPOS OBRIGATÓRIOS
+          const missingFields = await this.page.evaluate(() => { // ✅ CORRIGIDO
+              const required = document.querySelectorAll('[required]');
+              const missing = [];
+              required.forEach(field => {
+                  if (!field.value || field.value.trim() === '') {
+                      missing.push({
+                          name: field.name || field.id || field.className,
+                          type: field.type,
+                          placeholder: field.placeholder || 'N/A'
+                      });
+                  }
+              });
+              return missing;
+          });
+          
+          if (missingFields.length > 0) {
+              this.logger.warn('📋 Campos obrigatórios não preenchidos:', { missingFields }); // ✅ CORRIGIDO
+          }
+          
+          // SCREENSHOT PARA DEBUG (apenas em desenvolvimento)
+          if (process.env.NODE_ENV !== 'production') {
+              try {
+                  await this.page.screenshot({ // ✅ CORRIGIDO
+                      path: `/tmp/login-failed-${Date.now()}.png`,
+                      fullPage: true 
+                  });
+                  this.logger.info('📸 Screenshot salvo para análise'); // ✅ CORRIGIDO
+              } catch (screenshotError) {
+                  this.logger.warn('📸 Falha ao capturar screenshot:', { error: screenshotError.message }); // ✅ CORRIGIDO
+              }
+          }
+          
+          // DETERMINAR TIPO DE ERRO
+          let errorMessage = 'Login não foi bem-sucedido - ainda na página de login';
+          
+          if (captchaExists.length > 0) {
+              errorMessage = 'Login bloqueado por CAPTCHA - autenticação automática não possível';
+          } else if (errorMessages.length > 0) {
+              const mainError = errorMessages.find(err => err.visible)?.text || errorMessages[0]?.text;
+              errorMessage = `Login rejeitado: ${mainError}`;
+          } else if (missingFields.length > 0) {
+              errorMessage = `Campos obrigatórios não preenchidos: ${missingFields.map(f => f.name).join(', ')}`;
+          }
+          
+          throw new Error(errorMessage);
+      }
+      
+      // Se chegou aqui, login foi bem-sucedido
+      this.logger.info('✅ Login bem-sucedido - redirecionado para:', { url: currentUrl }); // ✅ CORRIGIDO
 
       // Tentar extrair token
       const token = await this.extractToken();
