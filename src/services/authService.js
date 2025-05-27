@@ -24,7 +24,8 @@ class PDPJAuthService {
           '--disable-gpu',
           '--window-size=1920x1080'
         ],
-        headless: true
+        headless: true,
+        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined
       });
       
       this.logger.info('Browser inicializado com sucesso');
@@ -91,8 +92,8 @@ class PDPJAuthService {
       
       this.logger.info('🌐 URL atual:');
       
-      // Aguarda um pouco para ter certeza que a página carregou completamente
-      await page.waitFor(3000);
+      // Substituindo waitForTimeout por delay com setTimeout + Promise
+      await new Promise(resolve => setTimeout(resolve, 3000));
       
       const pageTitle = await page.title();
       this.logger.info('📄 Título da página:', pageTitle);
@@ -194,8 +195,8 @@ class PDPJAuthService {
       if (currentUrl.includes('sso.cloud.pje.jus.br') || currentUrl.includes('auth/realms/pje')) {
         this.logger.info('🔄 Redirecionado para SSO Keycloak');
         
-        // Aguarda carregamento da página de SSO
-        await page.waitFor(2000);
+        // Aguarda carregamento da página de SSO - usando Promise + setTimeout em vez de waitForTimeout
+        await new Promise(resolve => setTimeout(resolve, 2000));
         
         // Busca por campos adicionais e os preenche
         const missingFields = await page.evaluate(() => {
@@ -316,7 +317,7 @@ class PDPJAuthService {
           .catch(() => this.logger.warn('⚠️ Erro ao acessar dashboard'));
         
         // Aguarda para dar tempo das requisições com token serem feitas
-        await page.waitFor(5000);
+        await new Promise(resolve => setTimeout(resolve, 5000));
         
         // Nova tentativa de obter token do localStorage
         token = await page.evaluate(() => {
