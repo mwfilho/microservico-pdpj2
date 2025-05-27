@@ -1,7 +1,7 @@
 // microservico-pdpj.js
 // ---------------------------------------------
 // Microserviço CommonJS que obtém token PDPJ
-// via Password Grant ou, em fallback, Puppeteer + interceptação de XHR para captura do Bearer
+// via Password Grant ou, em fallback, Puppeteer + varredura de storage por padrão JWT
 // ---------------------------------------------
 
 require('dotenv').config();
@@ -16,10 +16,9 @@ const PASS      = process.env.PJE_PASS;
 const PORT      = process.env.PORT || 3000;
 
 // URLs fixas
-const tokenUrl   = 'https://sso.cloud.pje.jus.br/auth/realms/pje/protocol/openid-connect/token';
-const SPA_LOGIN  = 'https://pje.cloud.tjpe.jus.br/1g/login.seam';
-const SPA_SEARCH = 'https://portaldeservicos.pdpj.jus.br/consulta';
-const API_BASE   = 'https://portaldeservicos.pdpj.jus.br/api/v2/processos';
+const KEYCLOAK_TOKEN_URL = 'https://sso.cloud.pje.jus.br/auth/realms/pje/protocol/openid-connect/token';
+const SPA_LOGIN          = 'https://pje.cloud.tjpe.jus.br/1g/login.seam';
+const PORTAL_URL         = 'https://portaldeservicos.pdpj.jus.br';
 
 if (!USER || !PASS) {
   console.error('❌ Defina PJE_USER e PJE_PASS nas variáveis de ambiente.');
@@ -29,16 +28,16 @@ if (!USER || !PASS) {
 const app = express();
 
 app.get('/token', async (_req, res) => {
-  // 1) Password Grant
+  // 1) Tenta Password Grant
   try {
     const resp = await axios.post(
-      tokenUrl,
+      KEYCLOAK_TOKEN_URL,
       qs.stringify({
-        grant_type:  'password',
-        client_id:   'pje-tjpe-1g-cloud',
-        username:    USER,
-        password:    PASS,
-        scope:       'openid'
+        grant_type: 'password',
+        client_id:  'pje-tjpe-1g-cloud',
+        username:   USER,
+        password:   PASS,
+        scope:      'openid'
       }),
       { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
     );
@@ -50,7 +49,7 @@ app.get('/token', async (_req, res) => {
     console.warn('⚠️ Password grant falhou:', err.response?.data || err.message);
   }
 
-  // 2) Fallback Puppeteer + interceptação XHR
+  // 2) Fallback: Puppeteer + varredura de storage buscando JWT
   let browser;
   try {
     browser = await puppeteer.launch({
@@ -61,46 +60,59 @@ app.get('/token', async (_req, res) => {
     });
     const page = await browser.newPage();
 
-    // interceptar XHRs para /api/v2/processos
-    let bearer;
-    page.on('request', req => {
-      if (req.url().startsWith(API_BASE)) {
-        const auth = req.headers()['authorization'];
-        if (auth?.startsWith('Bearer ')) bearer = auth.split(' ')[1];
+    // 2.1) Login no PJe-TJPE
+    await page.goto(SPA_LOGIN, { waitUntil: 'networkidle2' });
+    const inputUser = await page.waitForSelector('input[type="text"]', { timeout: 15000 });
+    await inputUser.click({ clickCount: 3 });
+    await inputUser.type(USER, { delay: 30 });
+    const inputPass = await page.waitForSelector('input[type="password"]', { timeout: 15000 });
+    await inputPass.click({ clickCount: 3 });
+    await inputPass.type(PASS, { delay: 30 });
+    const btn = await page.$('button[type="submit"], input[type="submit"]');
+    if (!btn) throw new Error('Botão de login não encontrado');
+    await Promise.all([
+      page.waitForNavigation({ waitUntil: 'networkidle2' }),
+      btn.click(),
+    ]);
+
+    // 2.2) Navega ao portal para ativar SSO
+    await page.goto(PORTAL_URL, { waitUntil: 'networkidle2' });
+
+    // 2.3) Varre localStorage e sessionStorage em busca de JWT
+    const token = await page.evaluate(() => {
+      const jwtPattern = /^[A-Za-z0-9\-_]+\.[A-Za-z0-9\-_]+\.[A-Za-z0-9\-_]+$/;
+      for (const storage of [window.localStorage, window.sessionStorage]) {
+        for (let i = 0; i < storage.length; i++) {
+          const key = storage.key(i);
+          const val = storage.getItem(key);
+          if (typeof val === 'string') {
+            if (jwtPattern.test(val)) {
+              return val;
+            }
+            try {
+              const obj = JSON.parse(val);
+              if (obj?.access_token && jwtPattern.test(obj.access_token)) {
+                return obj.access_token;
+              }
+            } catch {}
+          }
+        }
       }
+      return null;
     });
 
-    // 2.1) Login genérico
-    await page.goto(SPA_LOGIN, { waitUntil: 'networkidle2' });
-    const userInput = await page.waitForSelector('input[type="text"]', { timeout:10000 });
-    const passInput = await page.waitForSelector('input[type="password"]', { timeout:10000 });
-    await userInput.click({ clickCount:3 }); await userInput.type(USER, { delay:30 });
-    await passInput.click({ clickCount:3 }); await passInput.type(PASS, { delay:30 });
-    const submit = await page.$('button[type="submit"], input[type="submit"]');
-    if (!submit) throw new Error('Botão de login não encontrado');
-    await Promise.all([page.waitForNavigation({ waitUntil:'networkidle2' }), submit.click()]);
-
-    // 2.2) Navega à busca de processos para disparar XHR
-    await page.goto(SPA_SEARCH, { waitUntil: 'networkidle2' });
-    // digita número dummy e dispara busca
-    const searchInput = await page.waitForSelector('input[placeholder*="processo"]', { timeout:10000 });
-    await searchInput.click({ clickCount:3 }); await searchInput.type('0000000-00.0000.0.00.0000', { delay:30 });
-    const searchBtn = await page.$('button[type="submit"], button:has-text("Pesquisar")');
-    if (!searchBtn) throw new Error('Botão de buscar processo não encontrado');
-    await Promise.all([page.waitForRequest(r=>r.url().startsWith(API_BASE)&&bearer, {timeout:20000}), searchBtn.click()]);
-
-    if (!bearer) throw new Error('Bearer não capturado via interceptação');
-    console.log('✅ Token via intercept XHR');
-    return res.json({ access_token: bearer });
+    if (!token) throw new Error('access_token não encontrado em storage');
+    console.log('✅ Token obtido via storage scan');
+    return res.json({ access_token: token });
 
   } catch (err) {
     console.error('❌ Fallback falhou:', err.message);
-    return res.status(500).json({ error:'Falha ao obter token', details: err.message });
+    return res.status(500).json({ error: 'Falha ao obter token', details: err.message });
   } finally {
     if (browser) await browser.close();
   }
 });
 
-// Health-check
-app.get('/', (_req,res)=>res.send('🚀 PDPJ token service online'));
-app.listen(PORT,()=>console.log(`Listening on port ${PORT}`));
+// Health check
+app.get('/', (_req, res) => res.send('🚀 PDPJ Token Service online'));
+app.listen(PORT, () => console.log(`✅ Listening on port ${PORT}`));
