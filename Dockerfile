@@ -1,5 +1,5 @@
 # ===============================================================================
-# DOCKERFILE OTIMIZADO - ESTRUTURA CORRETA DO REPOSITÓRIO
+# DOCKERFILE - OTIMIZADO PARA PROJETO SEM package-lock.json
 # ===============================================================================
 FROM node:18-bullseye-slim
 
@@ -75,15 +75,32 @@ RUN groupadd -r nodeuser && useradd -r -g nodeuser -G audio,video nodeuser \
 WORKDIR /app
 
 # ===============================================================================
-# INSTALAÇÃO DE DEPENDÊNCIAS (OTIMIZADA PARA CACHE)
+# INSTALAÇÃO DE DEPENDÊNCIAS (APENAS COM PACKAGE.JSON)
 # ===============================================================================
 
-# Copiar arquivos de package primeiro (para cache do Docker)
-COPY package*.json ./
+# Copiar apenas package.json (não temos package-lock.json)
+COPY package.json ./
 
-# Como o package-lock.json JÁ EXISTE, usar npm ci
-RUN npm ci --only=production --no-audit --no-fund \
-    && npm cache clean --force
+# Verificar o que foi copiado
+RUN echo "=========================================" && \
+    echo "📋 INSTALAÇÃO SEM package-lock.json" && \
+    echo "=========================================" && \
+    echo "📁 Arquivos copiados:" && \
+    ls -la /app && \
+    echo "" && \
+    echo "📄 Conteúdo do package.json:" && \
+    cat /app/package.json && \
+    echo "" && \
+    echo "========================================="
+
+# Usar npm install (único método possível sem package-lock.json)
+RUN echo "🚀 Instalando dependências com npm install..." && \
+    npm install --only=production --no-audit --no-fund && \
+    echo "📦 Dependências instaladas:" && \
+    ls /app/node_modules | head -10 && \
+    echo "... (total: $(ls /app/node_modules | wc -l) pacotes)" && \
+    npm cache clean --force && \
+    echo "✅ Instalação concluída com sucesso!"
 
 # ===============================================================================
 # COPIAR CÓDIGO FONTE
@@ -93,18 +110,17 @@ RUN npm ci --only=production --no-audit --no-fund \
 COPY . .
 
 # ===============================================================================
-# VERIFICAÇÕES DE ESTRUTURA
+# VERIFICAÇÕES FINAIS DA ESTRUTURA
 # ===============================================================================
 RUN echo "=========================================" && \
-    echo "✅ VERIFICANDO ESTRUTURA DO PROJETO" && \
+    echo "✅ VERIFICAÇÃO FINAL DA ESTRUTURA" && \
     echo "=========================================" && \
-    echo "📁 Conteúdo da raiz /app:" && \
+    echo "📁 Conteúdo completo de /app:" && \
     ls -la /app && \
     echo "" && \
     echo "📄 Verificando arquivos principais:" && \
     test -f /app/app.js && echo "✅ app.js encontrado" || echo "❌ app.js NÃO encontrado" && \
     test -f /app/package.json && echo "✅ package.json encontrado" || echo "❌ package.json NÃO encontrado" && \
-    test -f /app/package-lock.json && echo "✅ package-lock.json encontrado" || echo "❌ package-lock.json NÃO encontrado" && \
     echo "" && \
     echo "📂 Verificando pastas:" && \
     test -d /app/routes && echo "✅ pasta routes/ encontrada" || echo "❌ pasta routes/ NÃO encontrada" && \
@@ -112,11 +128,13 @@ RUN echo "=========================================" && \
     test -d /app/utils && echo "✅ pasta utils/ encontrada" || echo "❌ pasta utils/ NÃO encontrada" && \
     test -d /app/middleware && echo "✅ pasta middleware/ encontrada" || echo "❌ pasta middleware/ NÃO encontrada" && \
     echo "" && \
-    echo "📋 Verificando arquivos específicos:" && \
-    test -f /app/routes/webhook.js && echo "✅ routes/webhook.js encontrado" || echo "❌ routes/webhook.js NÃO encontrado" && \
-    test -f /app/services/authService.js && echo "✅ services/authService.js encontrado" || echo "❌ services/authService.js NÃO encontrado" && \
-    test -f /app/services/puppeteerManager.js && echo "✅ services/puppeteerManager.js encontrado" || echo "❌ services/puppeteerManager.js NÃO encontrado" && \
-    test -f /app/utils/logger.js && echo "✅ utils/logger.js encontrado" || echo "❌ utils/logger.js NÃO encontrado" && \
+    echo "📋 Verificando módulos críticos:" && \
+    test -d /app/node_modules/express && echo "✅ Express instalado" || echo "❌ Express FALTANDO" && \
+    test -d /app/node_modules/puppeteer && echo "✅ Puppeteer instalado" || echo "❌ Puppeteer FALTANDO" && \
+    test -d /app/node_modules/cors && echo "✅ CORS instalado" || echo "❌ CORS FALTANDO" && \
+    test -d /app/node_modules/winston && echo "✅ Winston instalado" || echo "❌ Winston FALTANDO" && \
+    echo "" && \
+    echo "📦 Total de pacotes: $(ls /app/node_modules | wc -l)" && \
     echo "========================================="
 
 # ===============================================================================
@@ -145,5 +163,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
 # COMANDO DE INICIALIZAÇÃO
 # ===============================================================================
 
-# O app.js está na raiz, usar diretamente
 CMD ["node", "app.js"]
