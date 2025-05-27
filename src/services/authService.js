@@ -2,7 +2,7 @@ const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 const { createLogger } = require('../utils/logger');
 
-// Configuração do puppeteer com plugin stealth para evitar detecção
+// Configuração do puppeteer com plugin stealth
 puppeteer.use(StealthPlugin());
 
 class PDPJAuthService {
@@ -10,24 +10,18 @@ class PDPJAuthService {
     this.logger = createLogger('PDPJAuthService');
     this.browser = null;
     this.baseUrl = process.env.PJE_URL || 'https://pje.cloud.tjpe.jus.br/1g/login.seam';
+    this.portalUrl = process.env.PORTAL_URL || 'https://portaldeservicos.pdpj.jus.br';
   }
 
-  // Inicializar browser
+  // Métodos de inicialização e fechamento do browser
   async initialize() {
     try {
       const args = [
         '--no-sandbox',
         '--disable-setuid-sandbox',
         '--disable-dev-shm-usage',
-        '--disable-accelerated-2d-canvas',
-        '--disable-gpu',
         '--window-size=1920x1080'
       ];
-
-      if (process.env.PUPPETEER_ARGS) {
-        const extraArgs = process.env.PUPPETEER_ARGS.split(',');
-        args.push(...extraArgs);
-      }
 
       this.browser = await puppeteer.launch({
         args,
@@ -43,7 +37,6 @@ class PDPJAuthService {
     }
   }
 
-  // Fechar browser
   async close() {
     if (this.browser) {
       try {
@@ -56,18 +49,12 @@ class PDPJAuthService {
     }
   }
 
-  /**
-   * Wrapper para esperar de forma segura
-   * @param {number} ms Milissegundos para esperar
-   */
+  // Atraso seguro
   async delay(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
 
-  /**
-   * Métodos aprimorados para clicar em elementos
-   * Tenta várias estratégias
-   */
+  // Método para clicar em botões com várias estratégias
   async clickButton(page, selector) {
     try {
       this.logger.info(`Tentando clicar no seletor: ${selector}`);
@@ -81,17 +68,7 @@ class PDPJAuthService {
         this.logger.info('Clique direto falhou, tentando alternativas...', e.message);
       }
       
-      // Estratégia 2: Espera que seja visível e depois clica
-      try {
-        await page.waitForSelector(selector, { visible: true, timeout: 5000 });
-        await page.click(selector);
-        this.logger.info('✅ Clique após esperar visibilidade funcionou!');
-        return true;
-      } catch (e) {
-        this.logger.info('Clique após esperar visibilidade falhou...', e.message);
-      }
-      
-      // Estratégia 3: Uso de JavaScript para clicar
+      // Estratégia 2: JavaScript click
       try {
         await page.evaluate((sel) => {
           const element = document.querySelector(sel);
@@ -107,22 +84,7 @@ class PDPJAuthService {
         this.logger.info('Clique via JavaScript falhou...', e.message);
       }
       
-      // Estratégia 4: Clique em coordenadas do elemento
-      try {
-        const elementHandle = await page.$(selector);
-        if (elementHandle) {
-          const box = await elementHandle.boundingBox();
-          if (box) {
-            await page.mouse.click(box.x + box.width/2, box.y + box.height/2);
-            this.logger.info('✅ Clique via coordenadas do mouse funcionou!');
-            return true;
-          }
-        }
-      } catch (e) {
-        this.logger.info('Clique via coordenadas do mouse falhou...', e.message);
-      }
-      
-      // Estratégia 5: Enviar o formulário diretamente
+      // Estratégia 3: Enviar formulário diretamente
       try {
         await page.evaluate(() => {
           const form = document.querySelector('form');
@@ -138,12 +100,83 @@ class PDPJAuthService {
         this.logger.info('Envio direto do formulário falhou...', e.message);
       }
       
-      this.logger.warn('❌ Não foi possível clicar no elemento através de nenhuma estratégia');
+      this.logger.warn('❌ Não foi possível clicar no elemento');
       return false;
-      
     } catch (error) {
       this.logger.error('Erro ao tentar clicar no botão:', error);
       return false;
+    }
+  }
+
+  // Método para extrair tokens JWT - foco no KEYCLOAK_IDENTITY conforme documentação
+  async extractTokens(page) {
+    const tokens = {
+      idToken: null,
+      accessToken: null
+    };
+    
+    try {
+      // 1. Verificar cookies Keycloak (método primário conforme docs)
+      this.logger.info('🔍 Buscando tokens nos cookies Keycloak...');
+      const cookies = await page.cookies();
+      
+      // Token de identidade principal nos cookies
+      const keycloakIdentityCookie = cookies.find(c => c.name === 'KEYCLOAK_IDENTITY');
+      if (keycloakIdentityCookie) {
+        tokens.idToken = keycloakIdentityCookie.value;
+        // Na ausência de um access token explícito, o ID token também pode ser usado
+        tokens.accessToken = keycloakIdentityCookie.value;
+        this.logger.info('✅ Token encontrado no cookie KEYCLOAK_IDENTITY');
+      }
+
+      // Outras cookies relacionadas ao Keycloak
+      const keycloakCookies = cookies.filter(c => 
+        c.name.toLowerCase().includes('token') || 
+        c.name.toLowerCase().includes('keycloak') ||
+        c.name.toLowerCase().includes('oauth')
+      );
+      
+      if (keycloakCookies.length > 0) {
+        this.logger.info(`🔍 Encontrados ${keycloakCookies.length} cookies relacionados a autenticação`);
+        
+        // Criar lista de todos os cookies para logging
+        const cookieInfo = keycloakCookies.map(c => ({
+          name: c.name,
+          domain: c.domain,
+          path: c.path
+        }));
+        
+        this.logger.info('📋 Cookies de autenticação:', { cookieInfo });
+      }
+      
+      // 2. Verificar no localStorage (menos comum mas possível)
+      try {
+        this.logger.info('🔍 Verificando localStorage...');
+        const storageTokens = await page.evaluate(() => {
+          return {
+            accessToken: localStorage.getItem('access_token'),
+            authToken: localStorage.getItem('authToken'),
+            idToken: localStorage.getItem('id_token')
+          };
+        });
+        
+        if (storageTokens.accessToken && !tokens.accessToken) {
+          tokens.accessToken = storageTokens.accessToken;
+          this.logger.info('✅ Access Token encontrado no localStorage');
+        }
+        
+        if (storageTokens.authToken && !tokens.accessToken) {
+          tokens.accessToken = storageTokens.authToken;
+          this.logger.info('✅ Auth Token encontrado no localStorage');
+        }
+      } catch (e) {
+        this.logger.warn('⚠️ Erro ao verificar localStorage:', e.message);
+      }
+      
+      return tokens;
+    } catch (error) {
+      this.logger.error('❌ Erro ao extrair tokens:', error);
+      return tokens;
     }
   }
 
@@ -162,18 +195,10 @@ class PDPJAuthService {
         'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7'
       });
       
-      // Configurar viewpoint maior
-      await page.setViewport({
-        width: 1920,
-        height: 1080,
-        deviceScaleFactor: 1,
-      });
-      
       // Configurar timeout para navegação
-      page.setDefaultTimeout(parseInt(process.env.NAVIGATION_TIMEOUT || '90000'));
-      page.setDefaultNavigationTimeout(parseInt(process.env.NAVIGATION_TIMEOUT || '90000'));
+      page.setDefaultTimeout(parseInt(process.env.NAVIGATION_TIMEOUT || '60000'));
       
-      // Habilita interceptação de requisições para capturar o token
+      // Habilita interceptação de requisições para capturar o token nos headers
       await page.setRequestInterception(true);
       
       let token = null;
@@ -181,31 +206,21 @@ class PDPJAuthService {
       // Intercepta as requisições para capturar o token nos headers
       page.on('request', request => {
         const headers = request.headers();
-        if (headers.authorization && headers.authorization.includes('Bearer ')) {
-          token = headers.authorization.replace('Bearer ', '');
+        if (headers.authorization && headers.authorization.toLowerCase().includes('bearer ')) {
+          token = headers.authorization.replace(/bearer\s+/i, '');
           this.logger.info('Token JWT capturado na requisição');
         }
         request.continue();
       });
       
-      this.logger.info('🚀 Iniciando autenticação para usuário:');
-      
-      this.logger.info('🌐 Navegando para URL:');
+      this.logger.info('🚀 Iniciando autenticação para usuário:', username);
       
       // Acessa a página de login
+      this.logger.info('🌐 Navegando para URL:', this.baseUrl);
       await page.goto(this.baseUrl, { waitUntil: 'networkidle2', timeout: 60000 });
       
       this.logger.info('✅ Página carregada com sucesso!');
-      
-      this.logger.info('📊 Status HTTP:');
-      
-      this.logger.info('🌐 URL atual:');
-      
-      // Aguardar para garantir carregamento
       await this.delay(3000);
-      
-      const pageTitle = await page.title();
-      this.logger.info('📄 Título da página:', pageTitle);
       
       // ---- Fase 1: Login inicial no PJe ----
       this.logger.info('🔍 Aguardando campos de login...');
@@ -216,28 +231,16 @@ class PDPJAuthService {
       
       this.logger.info('✅ Campo de username encontrado!');
       
-      // Identifica os campos de login
-      const userSelector = '#username';
-      const passSelector = '#password';
-      
-      this.logger.info('✅ Campo username encontrado com seletor:');
-      
-      this.logger.info('✅ Campo password encontrado com seletor:');
-      
-      // Preenche as credenciais - adiciona delay entre digitações
+      // Preenche as credenciais
       this.logger.info('📝 Preenchendo credenciais...');
-      
-      await page.type(userSelector, username, { delay: 50 });
-      await this.delay(200); // Pequena pausa entre campos
-      await page.type(passSelector, password, { delay: 50 });
-      
+      await page.type('#username', username, { delay: 50 });
+      await this.delay(200);
+      await page.type('#password', password, { delay: 50 });
       this.logger.info('✅ Credenciais preenchidas');
-      await this.delay(500); // Pequena pausa antes de clicar
       
-      // Identificar e clicar no botão de login usando várias estratégias
+      // Clique no botão de login
+      await this.delay(500);
       const loginButtonSelector = 'button[type="submit"]';
-      
-      // Usar método robusto de clique
       const clickSuccess = await this.clickButton(page, loginButtonSelector);
       
       if (!clickSuccess) {
@@ -246,29 +249,24 @@ class PDPJAuthService {
       
       this.logger.info('⏳ Aguardando resposta do login...');
       
-      // Espera navegação ou redirecionamento após o login
+      // Aguardar navegação
       try {
         await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 15000 });
       } catch (e) {
         this.logger.warn('⚠️ Timeout na navegação, mas continuando...');
-        // Continuar mesmo se timeout - pode ser que a página tenha navegado parcialmente
       }
       
-      // Verifica URL atual para entender o estado do login
+      // ---- Fase 2: Se redirecionado para SSO Keycloak, preenche campos adicionais ----
       const currentUrl = page.url();
-      this.logger.info('🎯 Resultado do login:', {
-        status: 'attempted',
-        url: currentUrl
-      });
+      this.logger.info('🎯 URL atual:', currentUrl);
       
-      // ---- NOVA LÓGICA: Se redirecionado para SSO Keycloak, preenche campos adicionais ----
       if (currentUrl.includes('sso.cloud.pje.jus.br') || currentUrl.includes('auth/realms/pje')) {
         this.logger.info('🔄 Redirecionado para SSO Keycloak');
         
-        // Aguarda carregamento da página de SSO
+        // Aguardar carregamento
         await this.delay(3000);
         
-        // Busca por campos adicionais e os preenche
+        // Identificar campos obrigatórios vazios
         const missingFields = await page.evaluate(() => {
           const result = [];
           const inputs = document.querySelectorAll('input');
@@ -292,12 +290,11 @@ class PDPJAuthService {
             missingFields
           });
           
-          // Preenche campo login/número se necessário (CPF ou outro identificador)
+          // Preencher campo login/CPF
           const loginField = missingFields.find(f => 
             f.name === 'login' || 
             f.type === 'number' || 
-            f.name.includes('cpf') || 
-            f.name.includes('document')
+            f.name.includes('cpf')
           );
           
           if (loginField) {
@@ -309,180 +306,61 @@ class PDPJAuthService {
             this.logger.info('✅ Campo login preenchido com username/CPF');
           }
           
-          // Preenche campo email se necessário
+          // Preencher campo email
           const emailField = missingFields.find(f => 
             f.name === 'email' || 
-            f.type === 'email' || 
-            f.name.includes('mail')
+            f.type === 'email'
           );
           
           if (emailField) {
-            // Gera um email baseado no username
             const email = `${username}@exemplo.com.br`;
-            
-            const emailSelector = emailField.id ? 
+            const selector = emailField.id ? 
               `#${emailField.id}` : 
               `input[name="${emailField.name}"]`;
             
-            await page.type(emailSelector, email, { delay: 50 });
-            this.logger.info('✅ Campo email preenchido com email gerado');
-            
-            // Se houver campo de confirmação de email
-            const confirmEmailField = missingFields.find(f => 
-              f.name === 'email_confirm' || 
-              f.name.includes('confirma') || 
-              f.name.includes('confirm')
-            );
-            
-            if (confirmEmailField) {
-              const confirmSelector = confirmEmailField.id ? 
-                `#${confirmEmailField.id}` : 
-                `input[name="${confirmEmailField.name}"]`;
-              
-              await page.type(confirmSelector, email, { delay: 50 });
-              this.logger.info('✅ Campo confirmação de email preenchido');
-            }
+            await page.type(selector, email, { delay: 50 });
+            this.logger.info('✅ Campo email preenchido');
           }
           
-          await this.delay(1000); // Pausa antes de submeter
-          
-          // Procura por botão de continuação/submit na página do SSO
+          // Clicar em botão de submit
+          await this.delay(1000);
           const submitSelectors = [
             'button[type="submit"]',
             'input[type="submit"]',
             '.confirm',
-            '.btn-primary',
-            'button.submit',
-            'input.submit'
+            '.btn-primary'
           ];
-          
-          let submitClicked = false;
           
           for (const selector of submitSelectors) {
             if (await page.$(selector)) {
-              submitClicked = await this.clickButton(page, selector);
-              if (submitClicked) {
-                this.logger.info(`✅ Botão de continuação clicado com sucesso (${selector})`);
-                break;
-              }
+              await this.clickButton(page, selector);
+              break;
             }
           }
           
-          if (!submitClicked) {
-            // Se não encontrou um botão, tenta enviar o formulário diretamente
-            try {
-              await page.evaluate(() => {
-                const form = document.querySelector('form');
-                if (form) {
-                  form.submit();
-                  return true;
-                }
-                return false;
-              });
-              this.logger.info('✅ Formulário enviado via JavaScript');
-              submitClicked = true;
-            } catch (e) {
-              this.logger.warn('⚠️ Não foi possível enviar o formulário:', e.message);
-            }
-          }
-          
-          if (submitClicked) {
-            try {
-              await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 15000 });
-            } catch (e) {
-              this.logger.warn('⚠️ Timeout na navegação após submissão de campos adicionais...');
-              // Continuar mesmo se timeout
-            }
+          // Aguardar navegação
+          try {
+            await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 15000 });
+          } catch (e) {
+            this.logger.warn('⚠️ Timeout na navegação após formulário SSO...');
           }
         }
       }
       
-      // Verifica URL atual após os passos de autenticação
-      const finalUrl = page.url();
-      this.logger.info('🔍 URL final após autenticação:', {
-        url: finalUrl
-      });
+      // ---- Fase 3: Obter tokens ----
+      // Aguardar para garantir que sessão e tokens estão criados
+      await this.delay(5000);
       
-      // Tenta obter token usando várias estratégias
-      // Estratégia 1: Capturado via interceptação de requisição (já tentado acima)
+      // Extrair tokens - prioridade para cookies Keycloak conforme docs
+      const tokens = await this.extractTokens(page);
       
-      // Estratégia 2: Buscar no localStorage
-      if (!token) {
-        try {
-          token = await page.evaluate(() => {
-            return localStorage.getItem('access_token') || 
-                  localStorage.getItem('keycloak-token') ||
-                  localStorage.getItem('token') ||
-                  localStorage.getItem('authToken') ||
-                  sessionStorage.getItem('access_token') ||
-                  sessionStorage.getItem('keycloak-token');
-          });
-          
-          if (token) {
-            this.logger.info('✅ Token encontrado no Storage do navegador');
-          }
-        } catch (e) {
-          this.logger.warn('⚠️ Erro ao buscar token no localStorage:', e.message);
-        }
+      // Usar token interceptado se disponível
+      if (token) {
+        this.logger.info('✅ Token capturado via interceptação de requisição');
+        tokens.accessToken = token;
       }
-      
-      // Estratégia 3: Navegação para forçar requisições com token
-      if (!token) {
-        this.logger.info('🔄 Tentando acessar área logada para forçar requisições com token...');
-        
-        try {
-          await page.goto('https://pje.cloud.tjpe.jus.br/1g/dashboard', { 
-            waitUntil: 'networkidle2',
-            timeout: 30000
-          });
-        } catch (e) {
-          this.logger.warn('⚠️ Erro ao acessar dashboard:', e.message);
-        }
-        
-        // Aguarda para dar tempo das requisições com token serem feitas
-        await this.delay(5000);
-        
-        // Nova tentativa de obter token do localStorage
-        try {
-          token = await page.evaluate(() => {
-            return localStorage.getItem('access_token') || 
-                  localStorage.getItem('keycloak-token') ||
-                  localStorage.getItem('token') ||
-                  localStorage.getItem('authToken') ||
-                  sessionStorage.getItem('access_token') ||
-                  sessionStorage.getItem('keycloak-token');
-          });
-          
-          if (token) {
-            this.logger.info('✅ Token encontrado após navegação forçada');
-          }
-        } catch (e) {
-          this.logger.warn('⚠️ Erro ao buscar token no localStorage após navegação:', e.message);
-        }
-      }
-      
-      // Estratégia 4: Cookies
-      if (!token) {
-        try {
-          const cookies = await page.cookies();
-          const authCookie = cookies.find(c => 
-            c.name.toLowerCase().includes('token') || 
-            c.name.toLowerCase().includes('auth') || 
-            c.name.toLowerCase().includes('jwt') ||
-            c.name.toLowerCase().includes('keycloak') ||
-            c.name.toLowerCase().includes('pje')
-          );
-          
-          if (authCookie) {
-            token = authCookie.value;
-            this.logger.info('✅ Token encontrado nas cookies');
-          }
-        } catch (e) {
-          this.logger.warn('⚠️ Erro ao buscar token nos cookies:', e.message);
-        }
-      }
-      
-      // Captura screenshot para diagnóstico (opcional)
+
+      // Capturar screenshot para debug
       try {
         const screenshotPath = `/tmp/auth_${username}_${Date.now()}.png`;
         await page.screenshot({ path: screenshotPath, fullPage: true });
@@ -491,19 +369,22 @@ class PDPJAuthService {
         this.logger.warn('⚠️ Erro ao capturar screenshot:', e.message);
       }
       
-      // Verifica o resultado final da autenticação
-      if (token) {
-        this.logger.info('🎉 Autenticação bem-sucedida! Token JWT obtido.');
-        await page.close();
+      // Fechar página
+      await page.close();
+
+      // Resultado final
+      if (tokens.accessToken || tokens.idToken) {
+        const tokenToUse = tokens.accessToken || tokens.idToken;
+        this.logger.info('🎉 Autenticação bem-sucedida! Token obtido.');
         
         return {
           success: true,
-          token: token,
+          token: tokenToUse,
+          idToken: tokens.idToken,
           message: 'Autenticação realizada com sucesso'
         };
       } else {
-        this.logger.error('❌ Erro durante autenticação: Não foi possível obter token');
-        await page.close();
+        this.logger.error('❌ Não foi possível obter token');
         
         return {
           success: false,
@@ -517,32 +398,6 @@ class PDPJAuthService {
         success: false,
         message: error.message || 'Erro durante processo de autenticação'
       };
-    }
-  }
-
-  // Buscar processo usando token já obtido
-  async searchProcess(processNumber, token) {
-    try {
-      if (!token) {
-        throw new Error('Token não fornecido');
-      }
-      
-      if (!processNumber) {
-        throw new Error('Número de processo não fornecido');
-      }
-      
-      // Implementação da busca de processo usando o token JWT
-      // ...
-      
-      return {
-        success: true,
-        message: 'Processo encontrado',
-        processNumber: processNumber
-      };
-      
-    } catch (error) {
-      this.logger.error('Erro ao buscar processo:', error);
-      throw error;
     }
   }
 }
