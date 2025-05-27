@@ -1,14 +1,45 @@
-FROM node:20-slim
+# ==============================================================================
+# DOCKERFILE OTIMIZADO PARA MICROSERVIÇO PJE AUTH
+# Railway + Puppeteer + Node.js
+# ==============================================================================
 
-# Atualizar npm para versão mais recente
-RUN npm install -g npm@11.4.1
+# Usar imagem oficial Node.js com Debian (melhor compatibilidade)
+FROM node:18-bullseye-slim
 
-# Instalar dependências do Puppeteer
+# Metadados
+LABEL maintainer="mwfilho"
+LABEL description="Microserviço de autenticação PJE TJPE"
+LABEL version="1.0.0"
+
+# Variáveis de ambiente para build
+ENV DEBIAN_FRONTEND=noninteractive
+ENV NODE_ENV=production
+ENV NPM_CONFIG_LOGLEVEL=warn
+ENV NPM_CONFIG_PROGRESS=false
+
+# Atualizar sistema e instalar dependências essenciais
 RUN apt-get update && apt-get install -y \
+    # Utilitários básicos
     wget \
+    curl \
+    gnupg \
     ca-certificates \
+    apt-transport-https \
+    software-properties-common \
+    # Limpeza inicial
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
+# Instalar Chromium e dependências do Puppeteer
+RUN apt-get update && apt-get install -y \
+    # Browser
     chromium \
+    chromium-sandbox \
+    # Fontes
     fonts-liberation \
+    fonts-noto \
+    fonts-noto-color-emoji \
+    # Libraries para Puppeteer
     libappindicator3-1 \
     libasound2 \
     libatk-bridge2.0-0 \
@@ -41,38 +72,84 @@ RUN apt-get update && apt-get install -y \
     libxrender1 \
     libxss1 \
     libxtst6 \
+    # Utilitários X11
     lsb-release \
     xdg-utils \
-    && rm -rf /var/lib/apt/lists/*
+    # Limpeza
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean \
+    && apt-get autoremove -y
 
-# Criar diretório da aplicação
+# Criar usuário não-root para segurança
+RUN groupadd -r nodeuser && useradd -r -g nodeuser -G audio,video nodeuser \
+    && mkdir -p /home/nodeuser/Downloads \
+    && chown -R nodeuser:nodeuser /home/nodeuser
+
+# Definir diretório de trabalho
 WORKDIR /app
 
-# Copiar arquivos de dependências
+# Configurar Puppeteer para usar Chromium instalado
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+ENV CHROME_PATH=/usr/bin/chromium
+ENV CHROMIUM_PATH=/usr/bin/chromium
+
+# Configurações de display para headless
+ENV DISPLAY=:99
+ENV XVFB_WHD=1920x1080x24
+
+# Configurações do Node.js para produção
+ENV NODE_OPTIONS="--max-old-space-size=2048"
+ENV UV_THREADPOOL_SIZE=4
+
+# Copiar arquivos de package primeiro (para cache do Docker)
 COPY package*.json ./
 
-# Instalar dependências
-RUN npm install --production
+# Instalar dependências Node.js
+RUN npm ci --only=production --no-audit --no-fund \
+    && npm cache clean --force
 
-# Copiar código da aplicação
+# Copiar código fonte
 COPY . .
 
-# Criar usuário não-root
-RUN groupadd -r pptruser && useradd -r -g pptruser -G audio,video pptruser \
-    && mkdir -p /home/pptruser/Downloads \
-    && chown -R pptruser:pptruser /home/pptruser \
-    && chown -R pptruser:pptruser /app
+# Criar diretórios necessários e definir permissões
+RUN mkdir -p \
+    /app/logs \
+    /app/tmp \
+    /home/nodeuser/.cache/puppeteer \
+    && chown -R nodeuser:nodeuser /app \
+    && chown -R nodeuser:nodeuser /home/nodeuser/.cache
 
-# Criar links simbólicos e verificar instalação
-RUN ln -sf /usr/bin/chromium /usr/bin/google-chrome \
-    && ln -sf /usr/bin/chromium /usr/bin/chromium-browser \
-    && chmod +x /usr/bin/chromium
-    
-# Trocar para usuário não-root
-USER pptruser
+# Configurar permissões do Chromium
+RUN chmod 4755 /usr/bin/chromium
 
-# Expor porta
-EXPOSE 3000
+# Mudança de usuário (segurança)
+USER nodeuser
 
-# Comando de inicialização
-CMD ["node", "src/app.js"]
+# Verificar instalações
+RUN node --version \
+    && npm --version \
+    && /usr/bin/chromium --version
+
+# Exposição da porta
+EXPOSE 8080
+
+# Configurações finais de ambiente
+ENV PORT=8080
+ENV HOST=0.0.0.0
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+    CMD curl -f http://localhost:8080/health || exit 1
+
+# Script de inicialização
+CMD ["npm", "start"]
+
+# ==============================================================================
+# CONFIGURAÇÕES OPCIONAIS PARA DESENVOLVIMENTO
+# ==============================================================================
+
+# Para desenvolvimento, descomentar:
+# ENV NODE_ENV=development
+# ENV HEADLESS=false
+# CMD ["npm", "run", "dev"]
