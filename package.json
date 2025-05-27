@@ -1,32 +1,33 @@
 {
   "name": "microservico-pdpj",
   "version": "1.0.0",
-  "description": "Microserviço de autenticação e consulta PJe/PDPJ",
+  "description": "Microserviço para autenticação no PJE TJPE",
   "main": "src/app.js",
   "scripts": {
     "start": "node src/app.js",
-    "dev": "nodemon src/app.js"
+    "dev": "nodemon src/app.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "keywords": ["pje", "pdpj", "automation", "tjpe"],
-  "author": "MW Filho",
-  "license": "MIT",
   "dependencies": {
-    "express": "^4.19.2",
-    "puppeteer": "^22.8.2",
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
+    "express-rate-limit": "^6.7.0",
+    "puppeteer": "^21.0.0",
     "puppeteer-extra": "^3.3.6",
     "puppeteer-extra-plugin-stealth": "^2.11.2",
-    "dotenv": "^16.4.5",
-    "cors": "^2.8.5",
-    "helmet": "^7.1.0",
-    "express-rate-limit": "^7.2.0",
-    "winston": "^3.13.0",
-    "jsonwebtoken": "^9.0.2"
+    "winston": "^3.8.2"
   },
   "devDependencies": {
-    "nodemon": "^3.1.0"
+    "nodemon": "^2.0.22"
   },
   "engines": {
-    "node": ">=18.0.0",
-    "npm": ">=9.0.0"
-  }
-}
+    "node": ">=18.0.0"
+  },
+  "keywords": [
+    "pje",
+    "tjpe",
+    "auth",
+    "microservice"
+  ],
+  "author": "Your Name",
+  "license": "ISC"
