@@ -88,10 +88,87 @@ class PDPJAuthService {
         timeout: this.config.timeout
       });
 
-      // Aguardar campos de login
-      await this.page.waitForSelector('input[name="username"], input[id="username"]', {
-        timeout: this.config.timeout
-      });
+      // === DEBUG TEMPORÁRIO ===
+      this.logger.info('=== INICIANDO DEBUG ===');
+      this.logger.info('URL atual:', this.page.url());
+      
+      // Aguardar página carregar completamente
+      await this.page.waitForTimeout(5000);
+      
+      // Verificar título da página
+      const title = await this.page.title();
+      this.logger.info('Título da página:', title);
+      
+      // Verificar se há redirect ou página de erro
+      const currentUrl = this.page.url();
+      this.logger.info('URL após navegação:', currentUrl);
+      
+      // Tentar encontrar campos de input
+      const inputs = await this.page.$eval('input', els => 
+        els.map(el => ({
+          name: el.name,
+          id: el.id,
+          type: el.type,
+          placeholder: el.placeholder,
+          class: el.className
+        }))
+      );
+      this.logger.info('Inputs encontrados:', JSON.stringify(inputs, null, 2));
+      
+      // Verificar se há iframes
+      const frames = await this.page.frames();
+      this.logger.info('Frames encontrados:', frames.length);
+      
+      // Tentar seletores alternativos
+      const possibleSelectors = [
+        'input[name="username"]',
+        'input[id="username"]', 
+        'input[name="login"]',
+        'input[id="login"]',
+        'input[name="user"]',
+        'input[type="text"]',
+        'input[placeholder*="usuário"]',
+        'input[placeholder*="CPF"]',
+        'input[name="j_username"]',
+        'input[id="j_username"]'
+      ];
+      
+      for (const selector of possibleSelectors) {
+        const found = await this.page.$(selector);
+        this.logger.info(`Seletor ${selector}:`, found ? 'ENCONTRADO' : 'NÃO ENCONTRADO');
+      }
+      
+      // Verificar conteúdo HTML da página
+      const bodyContent = await this.page.$eval('body', el => el.innerText.substring(0, 500));
+      this.logger.info('Conteúdo da página (primeiros 500 chars):', bodyContent);
+      
+      // Tentar aguardar o seletor original com timeout menor
+      try {
+        await this.page.waitForSelector(`input[name="username"], input[id="username"]`, {
+          timeout: 10000
+        });
+        this.logger.info('Seletor original encontrado!');
+      } catch (error) {
+        this.logger.error('Seletor original falhou:', error.message);
+        
+        // Tentar seletores alternativos
+        let foundSelector = null;
+        for (const selector of possibleSelectors) {
+          try {
+            await this.page.waitForSelector(selector, { timeout: 2000 });
+            foundSelector = selector;
+            this.logger.info('Seletor alternativo encontrado:', selector);
+            break;
+          } catch (e) {
+            // Continue tentando
+          }
+        }
+        
+        if (!foundSelector) {
+          throw new Error('Nenhum campo de username encontrado na página');
+        }
+      }
+      // === FIM DEBUG ===
 
       // Preencher credenciais
       await this.page.type('input[name="username"], input[id="username"]', username);
