@@ -1,3 +1,4 @@
+
 {
   "name": "microservico-pdpj2",
   "version": "1.0.0",
@@ -23,17 +24,7 @@
   "engines": {
     "node": ">=18.0.0"
   },
-  "keywords": [
-    "pje",
-    "tjpe",
-    "auth",
-    "microservice",
-    "puppeteer"
-  ],
+  "keywords": ["pje", "tjpe", "auth", "microservice", "puppeteer"],
   "author": "mwfilho",
-  "license": "ISC",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/mwfilho/microservico-pdpj2.git"
-  }
+  "license": "ISC"
 }
