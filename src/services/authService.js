@@ -1,3 +1,4 @@
+
 const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 const { createLogger } = require('../utils/logger');
@@ -23,17 +24,17 @@ class PDPJAuthService {
         headless: this.config.headless,
         executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
         args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-gpu',
-        '--disable-web-security',
-        '--disable-features=IsolateOrigins,site-per-process',
-        '--disable-background-timer-throttling',
-        '--disable-backgrounding-occluded-windows',
-        '--disable-renderer-backgrounding'
-      ]
-    });
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          '--disable-dev-shm-usage',
+          '--disable-gpu',
+          '--disable-web-security',
+          '--disable-features=IsolateOrigins,site-per-process',
+          '--disable-background-timer-throttling',
+          '--disable-backgrounding-occluded-windows',
+          '--disable-renderer-backgrounding'
+        ]
+      });
       
       this.page = await this.browser.newPage();
       
@@ -82,230 +83,211 @@ class PDPJAuthService {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
 
-  // Função segura para executar operações na página
-  async safeEvaluate(func, defaultValue = null, description = '') {
-    try {
-      const result = await this.page.evaluate(func);
-      this.logger.info(`✅ ${description} executado com sucesso:`, result);
-      return result;
-    } catch (error) {
-      this.logger.error(`❌ Erro em ${description}:`, error.message);
-      return defaultValue;
-    }
-  }
-
-  // Função segura para obter propriedades da página
-  async safePageProperty(property, description = '') {
-    try {
-      let result;
-      switch (property) {
-        case 'url':
-          result = this.page.url();
-          break;
-        case 'title':
-          result = await this.page.title();
-          break;
-        case 'content':
-          result = await this.page.content();
-          break;
-        default:
-          result = 'Propriedade não reconhecida';
-      }
-      this.logger.info(`✅ ${description} obtido:`, result || 'VAZIO');
-      return result;
-    } catch (error) {
-      this.logger.error(`❌ Erro ao obter ${description}:`, error.message);
-      return null;
-    }
-  }
-
   async authenticate(username, password) {
     try {
-      this.logger.info('🚀 === ULTRA DEBUG INICIADO ===');
-      this.logger.info('📅 Timestamp:', new Date().toISOString());
-      this.logger.info('👤 Usuário:', username);
-      this.logger.info('🔧 Configuração:', JSON.stringify(this.config, null, 2));
+      this.logger.info('🚀 Iniciando autenticação para usuário:', username);
       
-      // PASSO 1: Verificar se página existe
-      this.logger.info('🔍 PASSO 1: Verificando página...');
-      try {
-        const pageExists = !!this.page;
-        this.logger.info('📄 Página existe:', pageExists);
-        
-        if (!pageExists) {
-          throw new Error('Página não foi criada corretamente');
-        }
-      } catch (error) {
-        this.logger.error('❌ Erro no PASSO 1:', error.message);
-        throw error;
-      }
+      // ✅ USAR URL CORRETA!
+      const loginUrl = `${this.config.pjeUrl}/1g/login.seam`;
+      this.logger.info('🌐 Navegando para URL CORRETA:', loginUrl);
       
-      // PASSO 2: Tentar navegação com timeout mais baixo
-      const targetUrl = `${this.config.pjeUrl}/pje/login.seam`;
-      this.logger.info('🌐 PASSO 2: Navegando para:', targetUrl);
-      
-      let response = null;
-      try {
-        this.logger.info('⏳ Iniciando navegação...');
-        
-        response = await this.page.goto(targetUrl, {
-          waitUntil: 'networkidle2',
-          timeout: 30000 // Timeout reduzido para 30s
-        });
-        
-        this.logger.info('✅ Navegação concluída!');
-        
-      } catch (error) {
-        this.logger.error('❌ Erro na navegação:', error.message);
-        this.logger.error('🔍 Tipo do erro:', error.name);
-        this.logger.error('📋 Stack:', error.stack);
-        
-        // Tentar navegação alternativa
-        this.logger.info('🔄 Tentando navegação alternativa...');
-        try {
-          response = await this.page.goto(targetUrl, {
-            waitUntil: 'load',
-            timeout: 20000
-          });
-          this.logger.info('✅ Navegação alternativa funcionou!');
-        } catch (altError) {
-          this.logger.error('❌ Navegação alternativa também falhou:', altError.message);
-        }
-      }
-      
-      // PASSO 3: Verificar resposta HTTP
-      this.logger.info('🔍 PASSO 3: Verificando resposta HTTP...');
-      if (response) {
-        try {
-          const status = response.status();
-          const statusText = response.statusText();
-          const headers = response.headers();
-          
-          this.logger.info('📊 Status HTTP:', status);
-          this.logger.info('📝 Status Text:', statusText);
-          this.logger.info('📋 Headers importantes:', {
-            'content-type': headers['content-type'],
-            'location': headers['location'],
-            'set-cookie': headers['set-cookie']
-          });
-          
-        } catch (error) {
-          this.logger.error('❌ Erro ao verificar resposta:', error.message);
-        }
-      } else {
-        this.logger.error('❌ Resposta é nula!');
-      }
-      
-      // PASSO 4: Aguardar e verificar URL atual
-      this.logger.info('🔍 PASSO 4: Verificando estado da página...');
+      const response = await this.page.goto(loginUrl, {
+        waitUntil: 'networkidle2',
+        timeout: this.config.timeout
+      });
+
+      this.logger.info('✅ Página carregada com sucesso!');
+      this.logger.info('📊 Status HTTP:', response?.status());
+      this.logger.info('🌐 URL atual:', this.page.url());
+
+      // Aguardar página carregar completamente
       await this.delay(3000);
       
-      const currentUrl = await this.safePageProperty('url', 'URL atual');
+      // Verificar título da página
+      const title = await this.page.title();
+      this.logger.info('📄 Título da página:', title);
+
+      // Aguardar por campos de login
+      this.logger.info('🔍 Aguardando campos de login...');
       
-      if (currentUrl && currentUrl !== targetUrl) {
-        this.logger.info('🔀 REDIRECT detectado!');
-        this.logger.info('🎯 URL original:', targetUrl);
-        this.logger.info('🎯 URL atual:', currentUrl);
-      }
-      
-      // PASSO 5: Verificar título
-      this.logger.info('🔍 PASSO 5: Verificando título...');
-      const title = await this.safePageProperty('title', 'Título da página');
-      
-      // PASSO 6: Verificar conteúdo HTML
-      this.logger.info('🔍 PASSO 6: Verificando HTML...');
-      const htmlContent = await this.safePageProperty('content', 'Conteúdo HTML');
-      
-      if (htmlContent) {
-        const htmlLength = htmlContent.length;
-        this.logger.info('📏 Tamanho do HTML:', htmlLength, 'caracteres');
-        
-        if (htmlLength > 0) {
-          this.logger.info('📝 HTML (primeiros 1000 chars):', htmlContent.substring(0, 1000));
-          
-          // Verificar se contém elementos de login
-          const hasLogin = htmlContent.toLowerCase().includes('login') || 
-                          htmlContent.toLowerCase().includes('usuario') ||
-                          htmlContent.toLowerCase().includes('senha');
-          this.logger.info('🔐 Contém elementos de login:', hasLogin);
-          
-        } else {
-          this.logger.error('❌ HTML está vazio!');
-        }
-      } else {
-        this.logger.error('❌ Não foi possível obter HTML!');
-      }
-      
-      // PASSO 7: Verificar DOM
-      this.logger.info('🔍 PASSO 7: Verificando DOM...');
-      
-      const domInfo = await this.safeEvaluate(() => {
-        return {
-          hasBody: !!document.body,
-          bodyChildren: document.body ? document.body.children.length : 0,
-          docReadyState: document.readyState,
-          docTitle: document.title,
-          url: window.location.href
-        };
-      }, {}, 'Informações do DOM');
-      
-      // PASSO 8: Contar elementos
-      this.logger.info('🔍 PASSO 8: Contando elementos...');
-      
-      const elementCounts = await this.safeEvaluate(() => {
-        return {
-          inputs: document.querySelectorAll('input').length,
-          buttons: document.querySelectorAll('button').length,
-          forms: document.querySelectorAll('form').length,
-          links: document.querySelectorAll('a').length,
-          divs: document.querySelectorAll('div').length,
-          scripts: document.querySelectorAll('script').length,
-          allElements: document.querySelectorAll('*').length
-        };
-      }, {}, 'Contagem de elementos');
-      
-      // PASSO 9: Verificar console errors
-      this.logger.info('🔍 PASSO 9: Verificando erros do console...');
-      
-      // Configurar listener para erros do console
-      this.page.on('console', (msg) => {
-        if (msg.type() === 'error') {
-          this.logger.error('🚨 Console Error:', msg.text());
-        }
-      });
-      
-      this.page.on('pageerror', (error) => {
-        this.logger.error('🚨 Page Error:', error.message);
-      });
-      
-      // PASSO 10: Verificar network failures
-      this.logger.info('🔍 PASSO 10: Configurando monitoramento de rede...');
-      
-      this.page.on('requestfailed', (request) => {
-        this.logger.error('🌐 Request Failed:', {
-          url: request.url(),
-          method: request.method(),
-          failure: request.failure()?.errorText
+      try {
+        await this.page.waitForSelector('input[name="j_username"], input[id="j_username"], input[name="username"]', {
+          timeout: 30000
         });
-      });
-      
-      this.page.on('response', (response) => {
-        if (response.status() >= 400) {
-          this.logger.error('🚨 HTTP Error Response:', {
-            url: response.url(),
-            status: response.status(),
-            statusText: response.statusText()
-          });
+        this.logger.info('✅ Campo de username encontrado!');
+      } catch (error) {
+        this.logger.error('❌ Timeout aguardando campo de username');
+        
+        // Debug: listar todos os inputs
+        const inputs = await this.page.$$eval('input', els => 
+          els.map(el => ({
+            name: el.name || 'N/A',
+            id: el.id || 'N/A',
+            type: el.type || 'N/A',
+            placeholder: el.placeholder || 'N/A'
+          }))
+        );
+        this.logger.info('🔍 Inputs encontrados:', inputs);
+        
+        throw new Error('Campo de username não encontrado após timeout');
+      }
+
+      // Tentar diferentes seletores para username
+      const usernameSelectors = [
+        'input[name="j_username"]',
+        'input[id="j_username"]', 
+        'input[name="username"]',
+        'input[id="username"]',
+        'input[type="text"]'
+      ];
+
+      let usernameInput = null;
+      for (const selector of usernameSelectors) {
+        try {
+          usernameInput = await this.page.$(selector);
+          if (usernameInput) {
+            this.logger.info('✅ Campo username encontrado com seletor:', selector);
+            break;
+          }
+        } catch (e) {
+          continue;
         }
-      });
+      }
+
+      if (!usernameInput) {
+        throw new Error('Nenhum campo de username encontrado na página');
+      }
+
+      // Tentar diferentes seletores para password
+      const passwordSelectors = [
+        'input[name="j_password"]',
+        'input[id="j_password"]',
+        'input[name="password"]',
+        'input[id="password"]',
+        'input[type="password"]'
+      ];
+
+      let passwordInput = null;
+      for (const selector of passwordSelectors) {
+        try {
+          passwordInput = await this.page.$(selector);
+          if (passwordInput) {
+            this.logger.info('✅ Campo password encontrado com seletor:', selector);
+            break;
+          }
+        } catch (e) {
+          continue;
+        }
+      }
+
+      if (!passwordInput) {
+        throw new Error('Nenhum campo de password encontrado na página');
+      }
+
+      // Preencher credenciais
+      this.logger.info('📝 Preenchendo credenciais...');
       
-      this.logger.info('🏁 === ULTRA DEBUG CONCLUÍDO ===');
+      await usernameInput.click({ clickCount: 3 }); // Selecionar tudo
+      await this.page.keyboard.type(username);
+      await this.delay(500);
+
+      await passwordInput.click({ clickCount: 3 }); // Selecionar tudo  
+      await this.page.keyboard.type(password);
+      await this.delay(500);
+
+      this.logger.info('✅ Credenciais preenchidas');
+
+      // Procurar botão de login
+      const loginButtonSelectors = [
+        'button[type="submit"]',
+        'input[type="submit"]',
+        'button:contains("Entrar")',
+        'button:contains("Login")',
+        'input[value*="Entrar"]',
+        'input[value*="Login"]'
+      ];
+
+      let loginButton = null;
+      for (const selector of loginButtonSelectors) {
+        try {
+          loginButton = await this.page.$(selector);
+          if (loginButton) {
+            this.logger.info('✅ Botão login encontrado com seletor:', selector);
+            break;
+          }
+        } catch (e) {
+          continue;
+        }
+      }
+
+      if (!loginButton) {
+        // Tentar submit do form
+        this.logger.info('🔍 Tentando submit do formulário...');
+        await this.page.keyboard.press('Enter');
+      } else {
+        this.logger.info('🔘 Clicando no botão de login...');
+        await loginButton.click();
+      }
+
+      // Aguardar navegação ou resposta
+      this.logger.info('⏳ Aguardando resposta do login...');
       
-      // Parar aqui para análise completa
-      throw new Error('🛑 ULTRA DEBUG CONCLUÍDO - Análise completa dos logs necessária');
+      try {
+        await Promise.race([
+          this.page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 }),
+          this.page.waitForSelector('.error, .alert-danger, .message-error', { timeout: 5000 })
+        ]);
+      } catch (e) {
+        // Timeout é normal, continuar
+      }
+
+      await this.delay(3000);
+
+      // Verificar se login foi bem-sucedido
+      const currentUrl = this.page.url();
+      this.logger.info('🌐 URL após login:', currentUrl);
+
+      const isLoginSuccessful = await this.checkLoginSuccess();
+      
+      if (!isLoginSuccessful) {
+        // Verificar se há mensagens de erro
+        const errorMessages = await this.page.$$eval('.error, .alert-danger, .message-error', els => 
+          els.map(el => el.textContent.trim()).filter(text => text.length > 0)
+        );
+        
+        if (errorMessages.length > 0) {
+          this.logger.error('❌ Erro de login:', errorMessages);
+          throw new Error(`Falha no login: ${errorMessages.join(', ')}`);
+        }
+        
+        throw new Error('Login não foi bem-sucedido - ainda na página de login');
+      }
+
+      this.logger.info('✅ Login bem-sucedido!');
+
+      // Tentar extrair token
+      const token = await this.extractToken();
+      
+      if (!token) {
+        this.logger.warn('⚠️ Token não encontrado, mas login foi bem-sucedido');
+        // Retornar um token mock ou identificador de sessão
+        return {
+          success: true,
+          token: 'session_authenticated',
+          message: 'Login bem-sucedido sem token específico'
+        };
+      }
+
+      this.logger.info('🎯 Token extraído com sucesso');
+      
+      return {
+        success: true,
+        token: token,
+        message: 'Autenticação realizada com sucesso'
+      };
 
     } catch (error) {
-      this.logger.error('💥 Erro durante ultra debug:', error);
+      this.logger.error('❌ Erro durante autenticação:', error.message);
       throw error;
     }
   }
@@ -313,22 +295,46 @@ class PDPJAuthService {
   async checkLoginSuccess() {
     try {
       const url = this.page.url();
-      const isLoggedIn = !url.includes('login') && 
-                        (url.includes('home') || url.includes('painel') || url.includes('processo'));
       
-      if (!isLoggedIn) {
-        const userElement = await this.page.$('span.usuario-logado, div.user-info, a[href*="logout"]');
-        return !!userElement;
+      // Verificar se não está mais na página de login
+      const isNotLoginPage = !url.includes('login.seam');
+      
+      if (isNotLoginPage) {
+        this.logger.info('✅ Não está mais na página de login');
+        return true;
       }
       
-      return isLoggedIn;
+      // Verificar elementos que indicam login bem-sucedido
+      const successIndicators = [
+        'span.usuario-logado',
+        'div.user-info', 
+        'a[href*="logout"]',
+        '.menu-principal',
+        '.painel-usuario'
+      ];
+      
+      for (const selector of successIndicators) {
+        try {
+          const element = await this.page.$(selector);
+          if (element) {
+            this.logger.info('✅ Indicador de sucesso encontrado:', selector);
+            return true;
+          }
+        } catch (e) {
+          continue;
+        }
+      }
+      
+      return false;
     } catch (error) {
+      this.logger.error('Erro ao verificar sucesso do login:', error);
       return false;
     }
   }
 
   async extractToken() {
     try {
+      // Verificar localStorage
       const localStorageToken = await this.page.evaluate(() => {
         const keys = ['access_token', 'accessToken', 'token', 'auth_token'];
         for (const key of keys) {
@@ -343,6 +349,7 @@ class PDPJAuthService {
         return localStorageToken;
       }
 
+      // Verificar sessionStorage
       const sessionStorageToken = await this.page.evaluate(() => {
         const keys = ['access_token', 'accessToken', 'token', 'auth_token'];
         for (const key of keys) {
@@ -357,22 +364,26 @@ class PDPJAuthService {
         return sessionStorageToken;
       }
 
+      // Verificar cookies
       const cookies = await this.page.cookies();
       const tokenCookie = cookies.find(c => 
         c.name.toLowerCase().includes('token') || 
-        c.name.toLowerCase().includes('auth')
+        c.name.toLowerCase().includes('auth') ||
+        c.name.toLowerCase().includes('session')
       );
 
       if (tokenCookie) {
-        this.logger.info('Token encontrado nos cookies');
+        this.logger.info('Token encontrado nos cookies:', tokenCookie.name);
         return tokenCookie.value;
       }
 
+      // Token capturado via interceptação
       if (this.capturedToken) {
         this.logger.info('Usando token capturado da rede');
         return this.capturedToken;
       }
 
+      // Verificar Keycloak
       const keycloakToken = await this.page.evaluate(() => {
         if (window.keycloak && window.keycloak.token) {
           return window.keycloak.token;
@@ -385,6 +396,7 @@ class PDPJAuthService {
         return keycloakToken;
       }
 
+      this.logger.info('Nenhum token específico encontrado');
       return null;
     } catch (error) {
       this.logger.error('Erro ao extrair token:', error);
