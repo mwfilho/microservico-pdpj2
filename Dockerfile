@@ -1,4 +1,6 @@
-
+# ===============================================================================
+# DOCKERFILE OTIMIZADO - ESTRUTURA CORRETA DO REPOSITÓRIO
+# ===============================================================================
 FROM node:18-bullseye-slim
 
 # Metadados
@@ -6,17 +8,20 @@ LABEL maintainer="mwfilho"
 LABEL description="Microserviço de autenticação PJE TJPE"
 LABEL version="1.0.0"
 
-# Variáveis de ambiente
+# Variáveis de ambiente para build
 ENV DEBIAN_FRONTEND=noninteractive
 ENV NODE_ENV=production
+ENV NPM_CONFIG_LOGLEVEL=warn
+
+# Configurações Puppeteer
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+ENV CHROME_PATH=/usr/bin/chromium
 
-# Atualizar e instalar dependências básicas
+# Atualizar sistema e instalar dependências essenciais
 RUN apt-get update && apt-get install -y \
     wget \
     curl \
-    gnupg \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
@@ -61,7 +66,7 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean
 
-# Criar usuário não-root
+# Criar usuário não-root para segurança
 RUN groupadd -r nodeuser && useradd -r -g nodeuser -G audio,video nodeuser \
     && mkdir -p /home/nodeuser \
     && chown -R nodeuser:nodeuser /home/nodeuser
@@ -69,42 +74,76 @@ RUN groupadd -r nodeuser && useradd -r -g nodeuser -G audio,video nodeuser \
 # Diretório de trabalho
 WORKDIR /app
 
-# Copiar package.json primeiro (para cache Docker)
+# ===============================================================================
+# INSTALAÇÃO DE DEPENDÊNCIAS (OTIMIZADA PARA CACHE)
+# ===============================================================================
+
+# Copiar arquivos de package primeiro (para cache do Docker)
 COPY package*.json ./
 
-# ✅ USAR npm install EM VEZ DE npm ci
-RUN npm install --only=production --no-audit --no-fund \
+# Como o package-lock.json JÁ EXISTE, usar npm ci
+RUN npm ci --only=production --no-audit --no-fund \
     && npm cache clean --force
 
-# Copiar código fonte
+# ===============================================================================
+# COPIAR CÓDIGO FONTE
+# ===============================================================================
+
+# Copiar TODO o código fonte
 COPY . .
 
-# Verificar estrutura de arquivos
-RUN echo "=== Verificando estrutura do projeto ===" && \
+# ===============================================================================
+# VERIFICAÇÕES DE ESTRUTURA
+# ===============================================================================
+RUN echo "=========================================" && \
+    echo "✅ VERIFICANDO ESTRUTURA DO PROJETO" && \
+    echo "=========================================" && \
+    echo "📁 Conteúdo da raiz /app:" && \
     ls -la /app && \
-    echo "=== Verificando arquivos principais ===" && \
+    echo "" && \
+    echo "📄 Verificando arquivos principais:" && \
     test -f /app/app.js && echo "✅ app.js encontrado" || echo "❌ app.js NÃO encontrado" && \
     test -f /app/package.json && echo "✅ package.json encontrado" || echo "❌ package.json NÃO encontrado" && \
-    test -d /app/routes && echo "✅ pasta routes encontrada" || echo "❌ pasta routes NÃO encontrada" && \
-    test -d /app/services && echo "✅ pasta services encontrada" || echo "❌ pasta services NÃO encontrada" && \
-    test -d /app/utils && echo "✅ pasta utils encontrada" || echo "❌ pasta utils NÃO encontrada"
+    test -f /app/package-lock.json && echo "✅ package-lock.json encontrado" || echo "❌ package-lock.json NÃO encontrado" && \
+    echo "" && \
+    echo "📂 Verificando pastas:" && \
+    test -d /app/routes && echo "✅ pasta routes/ encontrada" || echo "❌ pasta routes/ NÃO encontrada" && \
+    test -d /app/services && echo "✅ pasta services/ encontrada" || echo "❌ pasta services/ NÃO encontrada" && \
+    test -d /app/utils && echo "✅ pasta utils/ encontrada" || echo "❌ pasta utils/ NÃO encontrada" && \
+    test -d /app/middleware && echo "✅ pasta middleware/ encontrada" || echo "❌ pasta middleware/ NÃO encontrada" && \
+    echo "" && \
+    echo "📋 Verificando arquivos específicos:" && \
+    test -f /app/routes/webhook.js && echo "✅ routes/webhook.js encontrado" || echo "❌ routes/webhook.js NÃO encontrado" && \
+    test -f /app/services/authService.js && echo "✅ services/authService.js encontrado" || echo "❌ services/authService.js NÃO encontrado" && \
+    test -f /app/services/puppeteerManager.js && echo "✅ services/puppeteerManager.js encontrado" || echo "❌ services/puppeteerManager.js NÃO encontrado" && \
+    test -f /app/utils/logger.js && echo "✅ utils/logger.js encontrado" || echo "❌ utils/logger.js NÃO encontrado" && \
+    echo "========================================="
 
-# Definir permissões
+# ===============================================================================
+# CONFIGURAÇÕES FINAIS
+# ===============================================================================
+
+# Definir permissões corretas
 RUN chown -R nodeuser:nodeuser /app
 
-# Mudança para usuário não-root
+# Mudança para usuário não-root (segurança)
 USER nodeuser
 
-# Configurar variáveis de ambiente
+# Configurações de runtime
 ENV PORT=8080
 ENV HOST=0.0.0.0
+ENV NODE_OPTIONS="--max-old-space-size=2048"
 
-# Expor porta
+# Exposição da porta
 EXPOSE 8080
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
     CMD curl -f http://localhost:8080/health || exit 1
 
-# Comando de inicialização
-CMD ["npm", "start"]
+# ===============================================================================
+# COMANDO DE INICIALIZAÇÃO
+# ===============================================================================
+
+# O app.js está na raiz, usar diretamente
+CMD ["node", "app.js"]
