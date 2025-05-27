@@ -92,7 +92,7 @@ class PDPJAuthService {
       this.logger.info('🌐 URL atual:');
       
       // Aguarda um pouco para ter certeza que a página carregou completamente
-      await page.waitForTimeout(3000);
+      await page.waitFor(3000);
       
       const pageTitle = await page.title();
       this.logger.info('📄 Título da página:', pageTitle);
@@ -195,7 +195,7 @@ class PDPJAuthService {
         this.logger.info('🔄 Redirecionado para SSO Keycloak');
         
         // Aguarda carregamento da página de SSO
-        await page.waitForTimeout(2000);
+        await page.waitFor(2000);
         
         // Busca por campos adicionais e os preenche
         const missingFields = await page.evaluate(() => {
@@ -316,7 +316,7 @@ class PDPJAuthService {
           .catch(() => this.logger.warn('⚠️ Erro ao acessar dashboard'));
         
         // Aguarda para dar tempo das requisições com token serem feitas
-        await page.waitForTimeout(5000);
+        await page.waitFor(5000);
         
         // Nova tentativa de obter token do localStorage
         token = await page.evaluate(() => {
