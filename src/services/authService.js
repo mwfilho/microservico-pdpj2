@@ -1,4 +1,3 @@
-
 const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 const { createLogger } = require('../utils/logger');
@@ -11,7 +10,8 @@ class PDPJAuthService {
     this.page = null;
     this.logger = createLogger('PDPJAuthService');
     this.config = {
-      pjeUrl: process.env.PJE_URL || 'https://pje.cloud.tjpe.jus.br',
+      // URL completa direto da variável de ambiente
+      pjeLoginUrl: process.env.PJE_URL || 'https://pje.cloud.tjpe.jus.br/1g/login.seam',
       portalUrl: process.env.PORTAL_URL || 'https://portaldeservicos.pdpj.jus.br',
       timeout: parseInt(process.env.TIMEOUT) || 90000,
       headless: process.env.HEADLESS !== 'false'
@@ -83,13 +83,107 @@ class PDPJAuthService {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
 
+  // Função para clique robusto
+  async robustClick(selector, description = '') {
+    this.logger.info(`🔘 Tentando clique robusto em: ${description || selector}`);
+    
+    try {
+      // MÉTODO 1: Clique normal
+      const element = await this.page.$(selector);
+      if (!element) {
+        throw new Error(`Elemento não encontrado: ${selector}`);
+      }
+      
+      // Verificar se elemento está visível
+      const isVisible = await element.evaluate(el => {
+        const style = window.getComputedStyle(el);
+        return style.display !== 'none' && style.visibility !== 'hidden' && el.offsetParent !== null;
+      });
+      
+      this.logger.info(`👁️ Elemento visível: ${isVisible}`);
+      
+      if (isVisible) {
+        try {
+          await element.click();
+          this.logger.info('✅ Clique normal funcionou!');
+          return true;
+        } catch (clickError) {
+          this.logger.warn('⚠️ Clique normal falhou:', clickError.message);
+        }
+      }
+      
+      // MÉTODO 2: Scroll e clique
+      this.logger.info('🔄 Tentando scroll + clique...');
+      try {
+        await element.scrollIntoView();
+        await this.delay(500);
+        await element.click();
+        this.logger.info('✅ Scroll + clique funcionou!');
+        return true;
+      } catch (scrollClickError) {
+        this.logger.warn('⚠️ Scroll + clique falhou:', scrollClickError.message);
+      }
+      
+      // MÉTODO 3: JavaScript click
+      this.logger.info('🔄 Tentando JavaScript click...');
+      try {
+        await this.page.evaluate((sel) => {
+          const element = document.querySelector(sel);
+          if (element) {
+            element.click();
+            return true;
+          }
+          return false;
+        }, selector);
+        this.logger.info('✅ JavaScript click funcionou!');
+        return true;
+      } catch (jsClickError) {
+        this.logger.warn('⚠️ JavaScript click falhou:', jsClickError.message);
+      }
+      
+      // MÉTODO 4: Submit do form (se for um botão submit)
+      this.logger.info('🔄 Tentando submit do form...');
+      try {
+        await this.page.evaluate((sel) => {
+          const element = document.querySelector(sel);
+          if (element && element.form) {
+            element.form.submit();
+            return true;
+          }
+          return false;
+        }, selector);
+        this.logger.info('✅ Submit do form funcionou!');
+        return true;
+      } catch (submitError) {
+        this.logger.warn('⚠️ Submit do form falhou:', submitError.message);
+      }
+      
+      // MÉTODO 5: Enter key
+      this.logger.info('🔄 Tentando Enter key...');
+      try {
+        await element.focus();
+        await this.page.keyboard.press('Enter');
+        this.logger.info('✅ Enter key funcionou!');
+        return true;
+      } catch (enterError) {
+        this.logger.warn('⚠️ Enter key falhou:', enterError.message);
+      }
+      
+      throw new Error('Todos os métodos de clique falharam');
+      
+    } catch (error) {
+      this.logger.error(`❌ Erro no clique robusto: ${error.message}`);
+      throw error;
+    }
+  }
+
   async authenticate(username, password) {
     try {
       this.logger.info('🚀 Iniciando autenticação para usuário:', username);
       
-      // ✅ USAR URL CORRETA!
-      const loginUrl = `${this.config.pjeUrl}/1g/login.seam`;
-      this.logger.info('🌐 Navegando para URL CORRETA:', loginUrl);
+      // ✅ USAR URL COMPLETA DA VARIÁVEL!
+      const loginUrl = this.config.pjeLoginUrl;
+      this.logger.info('🌐 Navegando para URL:', loginUrl);
       
       const response = await this.page.goto(loginUrl, {
         waitUntil: 'networkidle2',
@@ -197,36 +291,50 @@ class PDPJAuthService {
 
       this.logger.info('✅ Credenciais preenchidas');
 
-      // Procurar botão de login
+      // Procurar botão de login com estratégia robusta
       const loginButtonSelectors = [
         'button[type="submit"]',
         'input[type="submit"]',
         'button:contains("Entrar")',
         'button:contains("Login")',
         'input[value*="Entrar"]',
-        'input[value*="Login"]'
+        'input[value*="Login"]',
+        '.btn-primary',
+        '.botao-login'
       ];
 
-      let loginButton = null;
+      let loginSuccess = false;
+
       for (const selector of loginButtonSelectors) {
         try {
-          loginButton = await this.page.$(selector);
+          const loginButton = await this.page.$(selector);
           if (loginButton) {
             this.logger.info('✅ Botão login encontrado com seletor:', selector);
-            break;
+            
+            try {
+              await this.robustClick(selector, `Botão de login (${selector})`);
+              loginSuccess = true;
+              break;
+            } catch (clickError) {
+              this.logger.warn(`⚠️ Falhou ao clicar em ${selector}:`, clickError.message);
+              continue;
+            }
           }
         } catch (e) {
           continue;
         }
       }
 
-      if (!loginButton) {
-        // Tentar submit do form
-        this.logger.info('🔍 Tentando submit do formulário...');
-        await this.page.keyboard.press('Enter');
-      } else {
-        this.logger.info('🔘 Clicando no botão de login...');
-        await loginButton.click();
+      if (!loginSuccess) {
+        // Último recurso: Enter no campo de password
+        this.logger.info('🔄 Último recurso: Enter no campo password...');
+        try {
+          await passwordInput.focus();
+          await this.page.keyboard.press('Enter');
+          loginSuccess = true;
+        } catch (enterError) {
+          throw new Error('Nenhum método de submit funcionou');
+        }
       }
 
       // Aguardar navegação ou resposta
