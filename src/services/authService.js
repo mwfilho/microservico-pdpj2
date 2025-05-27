@@ -12,7 +12,7 @@ class PDPJAuthService {
     this.config = {
       pjeUrl: process.env.PJE_URL || 'https://pje.cloud.tjpe.jus.br',
       portalUrl: process.env.PORTAL_URL || 'https://portaldeservicos.pdpj.jus.br',
-      timeout: parseInt(process.env.TIMEOUT) || 30000,
+      timeout: parseInt(process.env.TIMEOUT) || 90000,
       headless: process.env.HEADLESS !== 'false'
     };
   }
@@ -21,8 +21,8 @@ class PDPJAuthService {
     try {
       this.browser = await puppeteer.launch({
         headless: this.config.headless,
-         executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium', // ← CRUCIAL
-      args: [
+        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium', // ← CRUCIAL
+        args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
         '--disable-dev-shm-usage',
