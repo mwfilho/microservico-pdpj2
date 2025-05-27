@@ -1,0 +1,8 @@
+[phases.setup]
+nixPkgs = ["nodejs-18_x", "chromium", "glib", "nss", "nspr", "atk", "at-spi2-atk", "cups", "libdrm", "gtk3", "libxcomposite", "libxdamage", "libxfixes", "libxrandr", "gbm", "alsa-lib", "pango", "cairo"]
+
+[phases.install]
+cmds = ["npm install", "npx puppeteer browsers install chrome"]
+
+[start]
+cmd = "npm start"
