@@ -1,3 +1,4 @@
+
 const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 const { createLogger } = require('../utils/logger');
@@ -78,7 +79,6 @@ class PDPJAuthService {
     });
   }
 
-  // ✅ FUNÇÃO delay() NO LOCAL CORRETO (MÉTODO INDEPENDENTE)
   async delay(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
@@ -88,41 +88,129 @@ class PDPJAuthService {
       this.logger.info('Iniciando autenticação para usuário:', username);
       
       // Navegar para a página de login do PJe
-      await this.page.goto(`${this.config.pjeUrl}/pje/login.seam`, {
+      this.logger.info('🌐 Navegando para:', `${this.config.pjeUrl}/pje/login.seam`);
+      
+      const response = await this.page.goto(`${this.config.pjeUrl}/pje/login.seam`, {
         waitUntil: 'networkidle2',
         timeout: this.config.timeout
       });
 
-      // === DEBUG TEMPORÁRIO ===
-      this.logger.info('=== INICIANDO DEBUG ===');
-      this.logger.info('URL atual:', this.page.url());
+      // === DEBUG MELHORADO ===
+      this.logger.info('=== INICIANDO DEBUG MELHORADO ===');
       
-      // Aguardar página carregar completamente (USANDO delay CORRETAMENTE)
+      // Status da resposta HTTP
+      this.logger.info('🔥 Status HTTP:', response?.status() || 'N/A');
+      
+      // URL atual com valor
+      const currentUrl = this.page.url();
+      this.logger.info('🌐 URL atual:', currentUrl);
+
+      // Aguardar página carregar
       await this.delay(5000);
       
-      // Verificar título da página
-      const title = await this.page.title();
-      this.logger.info('Título da página:', title);
+      // Título da página com tratamento de erro
+      try {
+        const title = await this.page.title();
+        this.logger.info('📄 Título da página:', title || 'TÍTULO VAZIO');
+      } catch (e) {
+        this.logger.error('❌ Erro ao obter título:', e.message);
+      }
       
-      // Verificar se há redirect ou página de erro
-      const currentUrl = this.page.url();
-      this.logger.info('URL após navegação:', currentUrl);
+      // URL após delay
+      const urlAfterDelay = this.page.url();
+      this.logger.info('🔄 URL após delay:', urlAfterDelay);
       
-      // Tentar encontrar campos de input
-      const inputs = await this.page.$$eval('input', els => 
-        els.map(el => ({
-          name: el.name,
-          id: el.id,
-          type: el.type,
-          placeholder: el.placeholder,
-          class: el.className
-        }))
-      );
-      this.logger.info('Inputs encontrados:', JSON.stringify(inputs, null, 2));
+      // Verificar se houve redirect
+      if (currentUrl !== urlAfterDelay) {
+        this.logger.info('🔀 REDIRECT DETECTADO!');
+      }
       
-      // Verificar se há iframes
+      // Capturar HTML da página (primeiros 1000 chars)
+      try {
+        const htmlContent = await this.page.content();
+        this.logger.info('📝 HTML (1000 chars):', htmlContent.substring(0, 1000));
+      } catch (e) {
+        this.logger.error('❌ Erro ao obter HTML:', e.message);
+      }
+      
+      // Verificar se página carregou
+      try {
+        const bodyExists = await this.page.$('body');
+        this.logger.info('🎯 Body existe:', !!bodyExists);
+      } catch (e) {
+        this.logger.error('❌ Erro ao verificar body:', e.message);
+      }
+      
+      // Conteúdo visível da página
+      try {
+        const bodyText = await this.page.evaluate(() => {
+          return document.body ? document.body.innerText.substring(0, 500) : 'BODY NÃO ENCONTRADO';
+        });
+        this.logger.info('📖 Texto visível (500 chars):', bodyText);
+      } catch (e) {
+        this.logger.error('❌ Erro ao obter texto:', e.message);
+      }
+      
+      // Verificar inputs com mais detalhes
+      try {
+        const inputs = await this.page.$$eval('input', els => 
+          els.map(el => ({
+            name: el.name || 'N/A',
+            id: el.id || 'N/A',
+            type: el.type || 'N/A',
+            placeholder: el.placeholder || 'N/A',
+            class: el.className || 'N/A',
+            value: el.value || 'N/A'
+          }))
+        );
+        this.logger.info('🔍 Total de inputs:', inputs.length);
+        this.logger.info('📋 Inputs detalhados:', JSON.stringify(inputs, null, 2));
+      } catch (e) {
+        this.logger.error('❌ Erro ao obter inputs:', e.message);
+      }
+      
+      // Verificar todos os elementos form
+      try {
+        const forms = await this.page.$$eval('form', els => 
+          els.map(el => ({
+            action: el.action || 'N/A',
+            method: el.method || 'N/A',
+            id: el.id || 'N/A',
+            class: el.className || 'N/A'
+          }))
+        );
+        this.logger.info('📝 Total de forms:', forms.length);
+        this.logger.info('📋 Forms encontrados:', JSON.stringify(forms, null, 2));
+      } catch (e) {
+        this.logger.error('❌ Erro ao obter forms:', e.message);
+      }
+      
+      // Verificar frames
       const frames = await this.page.frames();
-      this.logger.info('Frames encontrados:', frames.length);
+      this.logger.info('🖼️ Total de frames:', frames.length);
+      
+      if (frames.length > 1) {
+        for (let i = 0; i < frames.length; i++) {
+          try {
+            const frameUrl = frames[i].url();
+            this.logger.info(`🖼️ Frame ${i}:`, frameUrl);
+          } catch (e) {
+            this.logger.info(`🖼️ Frame ${i}: Erro ao obter URL`);
+          }
+        }
+      }
+      
+      // Verificar se há mensagens de erro na página
+      try {
+        const errorMessages = await this.page.$$eval('.error, .alert-danger, .message-error', els => 
+          els.map(el => el.textContent)
+        );
+        if (errorMessages.length > 0) {
+          this.logger.info('⚠️ Mensagens de erro encontradas:', errorMessages);
+        }
+      } catch (e) {
+        // Sem elementos de erro
+      }
       
       // Tentar seletores alternativos
       const possibleSelectors = [
@@ -138,77 +226,19 @@ class PDPJAuthService {
         'input[id="j_username"]'
       ];
       
+      this.logger.info('🔍 Testando seletores...');
       for (const selector of possibleSelectors) {
-        const found = await this.page.$(selector);
-        this.logger.info(`Seletor ${selector}:`, found ? 'ENCONTRADO' : 'NÃO ENCONTRADO');
-      }
-      
-      // Verificar conteúdo HTML da página
-      const bodyContent = await this.page.$eval('body', el => el.innerText.substring(0, 500));
-      this.logger.info('Conteúdo da página (primeiros 500 chars):', bodyContent);
-      
-      // Tentar aguardar o seletor original com timeout menor
-      try {
-        await this.page.waitForSelector(`input[name="username"], input[id="username"]`, {
-          timeout: 10000
-        });
-        this.logger.info('Seletor original encontrado!');
-      } catch (error) {
-        this.logger.error('Seletor original falhou:', error.message);
-        
-        // Tentar seletores alternativos
-        let foundSelector = null;
-        for (const selector of possibleSelectors) {
-          try {
-            await this.page.waitForSelector(selector, { timeout: 2000 });
-            foundSelector = selector;
-            this.logger.info('Seletor alternativo encontrado:', selector);
-            break;
-          } catch (e) {
-            // Continue tentando
-          }
-        }
-        
-        if (!foundSelector) {
-          throw new Error('Nenhum campo de username encontrado na página');
+        try {
+          const found = await this.page.$(selector);
+          this.logger.info(`✅ Seletor ${selector}:`, found ? 'ENCONTRADO' : 'NÃO ENCONTRADO');
+        } catch (e) {
+          this.logger.info(`❌ Seletor ${selector}: ERRO -`, e.message);
         }
       }
-      // === FIM DEBUG ===
-
-      // Preencher credenciais
-      await this.page.type('input[name="username"], input[id="username"]', username);
-      await this.page.type('input[name="password"], input[id="password"]', password);
-
-      // Submeter formulário
-      await Promise.all([
-        this.page.waitForNavigation({ waitUntil: 'networkidle2' }),
-        this.page.click('button[type="submit"], input[type="submit"]')
-      ]);
-
-      // Verificar se login foi bem-sucedido
-      const loginSuccess = await this.checkLoginSuccess();
       
-      if (!loginSuccess) {
-        throw new Error('Falha na autenticação - credenciais inválidas ou erro no sistema');
-      }
-
-      // Capturar token do localStorage ou sessionStorage
-      const token = await this.extractToken();
+      // === FIM DEBUG MELHORADO ===
       
-      if (!token) {
-        throw new Error('Token não encontrado após autenticação');
-      }
-
-      // Validar acesso ao Portal de Serviços
-      const portalAccess = await this.validatePortalAccess(token);
-      
-      return {
-        success: true,
-        token: token,
-        portalAccess: portalAccess,
-        expiresIn: 3600, // 1 hora padrão
-        tokenType: 'Bearer'
-      };
+      throw new Error('🛑 DEBUG CONCLUÍDO - Parando execução para análise');
 
     } catch (error) {
       this.logger.error('Erro durante autenticação:', error);
@@ -218,13 +248,11 @@ class PDPJAuthService {
 
   async checkLoginSuccess() {
     try {
-      // Verificar se foi redirecionado para página principal ou se existe elemento de usuário logado
       const url = this.page.url();
       const isLoggedIn = !url.includes('login') && 
                         (url.includes('home') || url.includes('painel') || url.includes('processo'));
       
       if (!isLoggedIn) {
-        // Verificar por elementos que indicam login bem-sucedido
         const userElement = await this.page.$('span.usuario-logado, div.user-info, a[href*="logout"]');
         return !!userElement;
       }
@@ -237,9 +265,6 @@ class PDPJAuthService {
 
   async extractToken() {
     try {
-      // Tentar múltiplas estratégias para obter o token
-      
-      // 1. Verificar localStorage
       const localStorageToken = await this.page.evaluate(() => {
         const keys = ['access_token', 'accessToken', 'token', 'auth_token'];
         for (const key of keys) {
@@ -254,7 +279,6 @@ class PDPJAuthService {
         return localStorageToken;
       }
 
-      // 2. Verificar sessionStorage
       const sessionStorageToken = await this.page.evaluate(() => {
         const keys = ['access_token', 'accessToken', 'token', 'auth_token'];
         for (const key of keys) {
@@ -269,7 +293,6 @@ class PDPJAuthService {
         return sessionStorageToken;
       }
 
-      // 3. Verificar cookies
       const cookies = await this.page.cookies();
       const tokenCookie = cookies.find(c => 
         c.name.toLowerCase().includes('token') || 
@@ -281,13 +304,11 @@ class PDPJAuthService {
         return tokenCookie.value;
       }
 
-      // 4. Usar token capturado pela interceptação de rede
       if (this.capturedToken) {
         this.logger.info('Usando token capturado da rede');
         return this.capturedToken;
       }
 
-      // 5. Tentar extrair do Keycloak se disponível
       const keycloakToken = await this.page.evaluate(() => {
         if (window.keycloak && window.keycloak.token) {
           return window.keycloak.token;
@@ -309,7 +330,6 @@ class PDPJAuthService {
 
   async validatePortalAccess(token) {
     try {
-      // Navegar para o Portal de Serviços com o token
       await this.page.setExtraHTTPHeaders({
         'Authorization': `Bearer ${token}`
       });
@@ -319,9 +339,7 @@ class PDPJAuthService {
         timeout: this.config.timeout
       });
 
-      // Verificar se o acesso foi autorizado
       const isAuthorized = await this.page.evaluate(() => {
-        // Verificar se não foi redirecionado para login
         const url = window.location.href;
         return !url.includes('login') && !url.includes('unauthorized');
       });
@@ -335,38 +353,30 @@ class PDPJAuthService {
 
   async searchProcess(processNumber, token) {
     try {
-      // Configurar headers com token
       await this.page.setExtraHTTPHeaders({
         'Authorization': `Bearer ${token}`
       });
 
-      // Navegar para página de consulta
       await this.page.goto(`${this.config.portalUrl}/consulta`, {
         waitUntil: 'networkidle2'
       });
 
-      // Aguardar campo de busca
       await this.page.waitForSelector('input[name="numeroProcesso"], input[id="numeroProcesso"]', {
         timeout: this.config.timeout
       });
 
-      // Inserir número do processo
       await this.page.type('input[name="numeroProcesso"], input[id="numeroProcesso"]', processNumber);
 
-      // Clicar no botão de busca
       await Promise.all([
         this.page.waitForNavigation({ waitUntil: 'networkidle2' }),
         this.page.click('button[type="submit"], button#btnBuscar')
       ]);
 
-      // Aguardar resultados
       await this.page.waitForSelector('table.resultados, div.processo-info', {
         timeout: this.config.timeout
       });
 
-      // Extrair dados do processo
       const processData = await this.page.evaluate(() => {
-        // Implementar extração específica baseada na estrutura do portal
         const data = {
           numero: document.querySelector('.numero-processo')?.textContent,
           partes: Array.from(document.querySelectorAll('.parte')).map(el => el.textContent),
