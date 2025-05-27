@@ -4,6 +4,7 @@ FROM node:18-slim
 RUN apt-get update && apt-get install -y \
     wget \
     ca-certificates \
+    chromium \
     fonts-liberation \
     libappindicator3-1 \
     libasound2 \
@@ -59,6 +60,11 @@ RUN groupadd -r pptruser && useradd -r -g pptruser -G audio,video pptruser \
     && chown -R pptruser:pptruser /home/pptruser \
     && chown -R pptruser:pptruser /app
 
+# Criar links simbólicos e verificar instalação
+RUN ln -sf /usr/bin/chromium /usr/bin/google-chrome \
+    && ln -sf /usr/bin/chromium /usr/bin/chromium-browser \
+    && chmod +x /usr/bin/chromium
+    
 # Trocar para usuário não-root
 USER pptruser
 
