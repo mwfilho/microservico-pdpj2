@@ -21,15 +21,19 @@ class PDPJAuthService {
     try {
       this.browser = await puppeteer.launch({
         headless: this.config.headless,
-        args: [
-          '--no-sandbox',
-          '--disable-setuid-sandbox',
-          '--disable-dev-shm-usage',
-          '--disable-gpu',
-          '--disable-web-security',
-          '--disable-features=IsolateOrigins,site-per-process'
-        ]
-      });
+         executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium', // ← CRUCIAL
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-gpu',
+        '--disable-web-security',
+        '--disable-features=IsolateOrigins,site-per-process',
+        '--disable-background-timer-throttling',
+        '--disable-backgrounding-occluded-windows',
+        '--disable-renderer-backgrounding'
+      ]
+    });
       
       this.page = await this.browser.newPage();
       
