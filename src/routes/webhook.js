@@ -1,127 +1,42 @@
 const express = require('express');
 const router = express.Router();
-const puppeteerManager = require('../services/puppeteerManager');
-const { validateWebhookAuth } = require('../middleware/auth');
+const PuppeteerManager = require('../services/puppeteerManager');
 const { createLogger } = require('../utils/logger');
-const crypto = require('crypto');
 
 const logger = createLogger('WebhookRoute');
 
-// Middleware de validação para webhooks do N8N
-router.use(validateWebhookAuth);
-
-// Endpoint de autenticação
-router.post('/auth', async (req, res) => {
-  const { username, password, sessionId } = req.body;
-  
-  if (!username || !password) {
-    return res.status(400).json({
-      success: false,
-      error: 'Username e password são obrigatórios'
-    });
-  }
-
-  const effectiveSessionId = sessionId || crypto.randomBytes(16).toString('hex');
-
+// POST /webhook - Rota principal de autenticação
+router.post('/', async (req, res) => {
   try {
-    logger.info(`Requisição de autenticação recebida para usuário: ${username}`);
+    const { username, password } = req.body;
     
-    const authResult = await puppeteerManager.createSession(effectiveSessionId, {
-      username,
-      password
-    });
-
-    res.json({
-      success: true,
-      sessionId: effectiveSessionId,
-      token: authResult.token,
-      tokenType: authResult.tokenType,
-      expiresIn: authResult.expiresIn,
-      portalAccess: authResult.portalAccess
-    });
-
-  } catch (error) {
-    logger.error('Erro na autenticação:', error);
-    res.status(401).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
-
-// Endpoint de consulta de processo
-router.post('/consulta-processo', async (req, res) => {
-  const { sessionId, numeroProcesso, token } = req.body;
-
-  if (!sessionId && !token) {
-    return res.status(400).json({
-      success: false,
-      error: 'SessionId ou token é obrigatório'
-    });
-  }
-
-  if (!numeroProcesso) {
-    return res.status(400).json({
-      success: false,
-      error: 'Número do processo é obrigatório'
-    });
-  }
-
-  try {
-    let processData;
-
-    if (sessionId) {
-      // Usar sessão existente
-      processData = await puppeteerManager.executeInSession(
-        sessionId,
-        async (authService, sessionToken) => {
-          return await authService.searchProcess(numeroProcesso, sessionToken);
-        }
-      );
-    } else {
-      // Criar sessão temporária com token fornecido
-      // Implementar lógica para uso direto do token
-      return res.status(501).json({
+    // Validar dados de entrada
+    if (!username || !password) {
+      logger.warn('Dados de entrada inválidos', { username: username ? 'presente' : 'ausente', password: password ? 'presente' : 'ausente' });
+      return res.status(400).json({
         success: false,
-        error: 'Uso direto de token ainda não implementado'
+        error: 'Username e password são obrigatórios'
       });
     }
 
-    res.json({
-      success: true,
-      processo: processData
-    });
+    logger.info('Requisição de autenticação recebida para usuário:', username);
 
-  } catch (error) {
-    logger.error('Erro na consulta de processo:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
+    // Criar nova sessão
+    const puppeteerManager = new PuppeteerManager();
+    const result = await puppeteerManager.createSession(username, password);
 
-// Endpoint para fechar sessão
-router.post('/logout', async (req, res) => {
-  const { sessionId } = req.body;
-
-  if (!sessionId) {
-    return res.status(400).json({
-      success: false,
-      error: 'SessionId é obrigatório'
-    });
-  }
-
-  try {
-    await puppeteerManager.closeSession(sessionId);
+    logger.info('Autenticação bem-sucedida para usuário:', username);
     
     res.json({
       success: true,
-      message: 'Sessão encerrada com sucesso'
+      sessionId: result.sessionId,
+      token: result.token,
+      message: 'Autenticação realizada com sucesso'
     });
 
   } catch (error) {
-    logger.error('Erro ao fechar sessão:', error);
+    logger.error('Erro na autenticação:', error.message);
+    
     res.status(500).json({
       success: false,
       error: error.message
@@ -129,13 +44,20 @@ router.post('/logout', async (req, res) => {
   }
 });
 
-// Endpoint de health check
+// GET /webhook/health - Health check
 router.get('/health', (req, res) => {
   res.json({
-    success: true,
-    status: 'healthy',
-    timestamp: new Date().toISOString()
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    service: 'PJE Auth Webhook'
   });
+});
+
+// POST /webhook/auth - Rota alternativa (para compatibilidade)
+router.post('/auth', async (req, res) => {
+  // Redirecionar para a rota principal
+  req.url = '/';
+  router.handle(req, res);
 });
 
 module.exports = router;
