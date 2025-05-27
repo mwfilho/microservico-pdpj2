@@ -1,4 +1,3 @@
-
 {
   "name": "microservico-pdpj2",
   "version": "1.0.0",
@@ -7,7 +6,10 @@
   "scripts": {
     "start": "node app.js",
     "dev": "nodemon app.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "lint": "eslint .",
+    "prestart": "echo 'Iniciando microserviço PJE Auth...'",
+    "postinstall": "echo 'Dependências instaladas com sucesso'"
   },
   "dependencies": {
     "express": "^4.18.2",
@@ -22,9 +24,26 @@
     "nodemon": "^2.0.22"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=18.0.0",
+    "npm": ">=8.0.0"
   },
-  "keywords": ["pje", "tjpe", "auth", "microservice", "puppeteer"],
+  "keywords": [
+    "pje",
+    "tjpe", 
+    "auth",
+    "microservice",
+    "puppeteer",
+    "railway",
+    "express"
+  ],
   "author": "mwfilho",
-  "license": "ISC"
+  "license": "ISC",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mwfilho/microservico-pdpj2.git"
+  },
+  "homepage": "https://github.com/mwfilho/microservico-pdpj2#readme",
+  "bugs": {
+    "url": "https://github.com/mwfilho/microservico-pdpj2/issues"
+  }
 }
