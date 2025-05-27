@@ -3,6 +3,9 @@ const cors = require('cors');
 const rateLimit = require('express-rate-limit');
 const { createLogger } = require('./utils/logger');
 
+// Importar middleware
+const authMiddleware = require('./middleware/auth');
+
 // Importar rotas
 const webhookRoutes = require('./routes/webhook');
 
@@ -11,9 +14,9 @@ const app = express();
 
 // Configuração de CORS
 app.use(cors({
-  origin: true, // Permitir qualquer origem em desenvolvimento
+  origin: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-API-Key'],
   credentials: true
 }));
 
@@ -21,32 +24,25 @@ app.use(cors({
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// Configuração de rate limiting com trust proxy corrigido
+// Configuração de rate limiting
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutos
-  max: 100, // máximo 100 requests por IP por janela
+  max: 100, // máximo 100 requests por IP
   message: {
     error: 'Muitas tentativas. Tente novamente em 15 minutos.'
   },
   standardHeaders: true,
   legacyHeaders: false,
-  // CORREÇÃO: Configurar trust proxy corretamente
-  trustProxy: false, // Mudado de true para false para evitar o warning
+  trustProxy: process.env.NODE_ENV === 'production' ? 1 : false,
   keyGenerator: (req) => {
-    // Usar IP real ou fallback para IP local
-    return req.ip || req.connection.remoteAddress || 'unknown';
+    return req.ip || req.connection.remoteAddress || req.headers['x-forwarded-for'] || 'unknown';
   }
 });
 
-// Aplicar rate limiting apenas em produção
-if (process.env.NODE_ENV === 'production') {
-  app.use(limiter);
-  logger.info('Rate limiting ativo');
-} else {
-  logger.info('Rate limiting desabilitado (desenvolvimento)');
-}
+// Aplicar rate limiting
+app.use(limiter);
 
-// Middleware de log de requisições
+// Middleware de log
 app.use((req, res, next) => {
   logger.info(`${req.method} ${req.path}`, {
     ip: req.ip,
@@ -56,20 +52,24 @@ app.use((req, res, next) => {
   next();
 });
 
-// Rota principal - Health check
+// Rota principal
 app.get('/', (req, res) => {
   res.json({
     status: 'ok',
     message: 'PJE Auth Service funcionando',
     timestamp: new Date().toISOString(),
-    version: '1.0.0'
+    version: '1.0.0',
+    routes: [
+      'GET /',
+      'GET /health',
+      'POST /webhook',
+      'GET /webhook/health',
+      'POST /webhook/auth'
+    ]
   });
 });
 
-// Registrar rotas do webhook
-app.use('/webhook', webhookRoutes);
-
-// Rota de health check global
+// Health check
 app.get('/health', (req, res) => {
   res.json({
     status: 'healthy',
@@ -80,10 +80,15 @@ app.get('/health', (req, res) => {
   });
 });
 
-// Middleware de tratamento de erros
+// Aplicar middleware de auth nas rotas webhook
+app.use('/webhook', authMiddleware);
+
+// Registrar rotas
+app.use('/webhook', webhookRoutes);
+
+// Tratamento de erros
 app.use((err, req, res, next) => {
   logger.error('Erro não tratado:', err);
-  
   res.status(500).json({
     success: false,
     error: 'Erro interno do servidor',
@@ -91,17 +96,15 @@ app.use((err, req, res, next) => {
   });
 });
 
-// Middleware para rotas não encontradas
+// Rotas não encontradas
 app.use('*', (req, res) => {
   logger.warn(`Rota não encontrada: ${req.method} ${req.originalUrl}`);
-  
   res.status(404).json({
     success: false,
     error: 'Rota não encontrada',
-    message: `${req.method} ${req.originalUrl} não existe`,
     availableRoutes: [
       'GET /',
-      'GET /health',
+      'GET /health', 
       'POST /webhook',
       'GET /webhook/health',
       'POST /webhook/auth'
@@ -113,12 +116,13 @@ app.use('*', (req, res) => {
 const PORT = process.env.PORT || 8080;
 
 const server = app.listen(PORT, '0.0.0.0', () => {
-  logger.info(`Servidor rodando na porta ${PORT}`);
+  logger.info(`🚀 Servidor rodando na porta ${PORT}`);
+  logger.info(`📡 Ambiente: ${process.env.NODE_ENV || 'development'}`);
 });
 
 // Graceful shutdown
 process.on('SIGTERM', () => {
-  logger.info('SIGTERM recebido, encerrando gracefully...');
+  logger.info('SIGTERM recebido, encerrando...');
   server.close(() => {
     logger.info('Servidor encerrado');
     process.exit(0);
@@ -126,11 +130,26 @@ process.on('SIGTERM', () => {
 });
 
 process.on('SIGINT', () => {
-  logger.info('SIGINT recebido, encerrando gracefully...');
+  logger.info('SIGINT recebido, encerrando...');
   server.close(() => {
     logger.info('Servidor encerrado');
     process.exit(0);
   });
 });
+
+// Cleanup de sessões
+const PuppeteerManager = require('./services/puppeteerManager');
+const puppeteerManager = new PuppeteerManager();
+
+setInterval(async () => {
+  try {
+    const cleaned = await puppeteerManager.cleanupExpiredSessions();
+    if (cleaned > 0) {
+      logger.info(`🧹 Limpas ${cleaned} sessões expiradas`);
+    }
+  } catch (error) {
+    logger.error('Erro na limpeza:', error);
+  }
+}, 15 * 60 * 1000);
 
 module.exports = app;
