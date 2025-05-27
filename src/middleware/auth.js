@@ -4,7 +4,7 @@ const logger = createLogger('AuthMiddleware');
 function validateWebhookAuth(req, res, next) {
   const webhookSecret = req.headers['x-webhook-secret'];
   
-  if (!webhookSecret || webhookSecret.trim() !== process.env.WEBHOOK_SECRET?..trim()) {
+  if (!webhookSecret || webhookSecret.trim() !== process.env.WEBHOOK_SECRET?.trim()) {
     logger.warn('Tentativa de acesso não autorizada ao webhook');
     return res.status(401).json({
       success: false,
