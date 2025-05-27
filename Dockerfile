@@ -1,5 +1,5 @@
 # ===============================================================================
-# DOCKERFILE - OTIMIZADO PARA PROJETO SEM package-lock.json
+# DOCKERFILE - ESTRUTURA CORRETA COM /src/app.js
 # ===============================================================================
 FROM node:18-bullseye-slim
 
@@ -8,7 +8,7 @@ LABEL maintainer="mwfilho"
 LABEL description="Microserviço de autenticação PJE TJPE"
 LABEL version="1.0.0"
 
-# Variáveis de ambiente para build
+# Variáveis de ambiente
 ENV DEBIAN_FRONTEND=noninteractive
 ENV NODE_ENV=production
 ENV NPM_CONFIG_LOGLEVEL=warn
@@ -18,55 +18,22 @@ ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 ENV CHROME_PATH=/usr/bin/chromium
 
-# Atualizar sistema e instalar dependências essenciais
+# Instalar dependências do sistema
 RUN apt-get update && apt-get install -y \
-    wget \
-    curl \
-    ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
-
-# Instalar Chromium e dependências do Puppeteer
-RUN apt-get update && apt-get install -y \
-    chromium \
-    fonts-liberation \
-    libappindicator3-1 \
-    libasound2 \
-    libatk-bridge2.0-0 \
-    libatk1.0-0 \
-    libc6 \
-    libcairo2 \
-    libcups2 \
-    libdbus-1-3 \
-    libexpat1 \
-    libfontconfig1 \
-    libgbm1 \
-    libgcc1 \
-    libglib2.0-0 \
-    libgtk-3-0 \
-    libnspr4 \
-    libnss3 \
-    libpango-1.0-0 \
-    libpangocairo-1.0-0 \
-    libstdc++6 \
-    libx11-6 \
-    libx11-xcb1 \
-    libxcb1 \
-    libxcomposite1 \
-    libxcursor1 \
-    libxdamage1 \
-    libxext6 \
-    libxfixes3 \
-    libxi6 \
-    libxrandr2 \
-    libxrender1 \
-    libxss1 \
-    libxtst6 \
-    lsb-release \
-    xdg-utils \
+    wget curl ca-certificates chromium \
+    fonts-liberation libappindicator3-1 \
+    libasound2 libatk-bridge2.0-0 libatk1.0-0 \
+    libcairo2 libcups2 libdbus-1-3 libexpat1 \
+    libfontconfig1 libgbm1 libglib2.0-0 \
+    libgtk-3-0 libnspr4 libnss3 libpango-1.0-0 \
+    libpangocairo-1.0-0 libx11-6 libx11-xcb1 \
+    libxcb1 libxcomposite1 libxcursor1 libxdamage1 \
+    libxext6 libxfixes3 libxi6 libxrandr2 \
+    libxrender1 libxss1 libxtst6 lsb-release xdg-utils \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean
 
-# Criar usuário não-root para segurança
+# Criar usuário não-root
 RUN groupadd -r nodeuser && useradd -r -g nodeuser -G audio,video nodeuser \
     && mkdir -p /home/nodeuser \
     && chown -R nodeuser:nodeuser /home/nodeuser
@@ -75,32 +42,25 @@ RUN groupadd -r nodeuser && useradd -r -g nodeuser -G audio,video nodeuser \
 WORKDIR /app
 
 # ===============================================================================
-# INSTALAÇÃO DE DEPENDÊNCIAS (APENAS COM PACKAGE.JSON)
+# INSTALAÇÃO DE DEPENDÊNCIAS
 # ===============================================================================
 
-# Copiar apenas package.json (não temos package-lock.json)
+# Copiar package.json (não temos package-lock.json)
 COPY package.json ./
 
-# Verificar o que foi copiado
+# Verificar e instalar dependências
 RUN echo "=========================================" && \
-    echo "📋 INSTALAÇÃO SEM package-lock.json" && \
+    echo "📋 INSTALAÇÃO DE DEPENDÊNCIAS" && \
     echo "=========================================" && \
-    echo "📁 Arquivos copiados:" && \
-    ls -la /app && \
-    echo "" && \
     echo "📄 Conteúdo do package.json:" && \
     cat /app/package.json && \
     echo "" && \
-    echo "========================================="
-
-# Usar npm install (único método possível sem package-lock.json)
-RUN echo "🚀 Instalando dependências com npm install..." && \
+    echo "🚀 Instalando dependências..." && \
     npm install --only=production --no-audit --no-fund && \
-    echo "📦 Dependências instaladas:" && \
-    ls /app/node_modules | head -10 && \
-    echo "... (total: $(ls /app/node_modules | wc -l) pacotes)" && \
+    echo "✅ Dependências instaladas!" && \
+    echo "📦 Pacotes instalados: $(ls /app/node_modules | wc -l)" && \
     npm cache clean --force && \
-    echo "✅ Instalação concluída com sucesso!"
+    echo "========================================="
 
 # ===============================================================================
 # COPIAR CÓDIGO FONTE
@@ -110,49 +70,48 @@ RUN echo "🚀 Instalando dependências com npm install..." && \
 COPY . .
 
 # ===============================================================================
-# VERIFICAÇÕES FINAIS DA ESTRUTURA
+# VERIFICAÇÃO DA ESTRUTURA COM /src
 # ===============================================================================
 RUN echo "=========================================" && \
-    echo "✅ VERIFICAÇÃO FINAL DA ESTRUTURA" && \
+    echo "✅ VERIFICAÇÃO ESTRUTURA COM /src" && \
     echo "=========================================" && \
-    echo "📁 Conteúdo completo de /app:" && \
+    echo "📁 Conteúdo da raiz /app:" && \
     ls -la /app && \
     echo "" && \
-    echo "📄 Verificando arquivos principais:" && \
-    test -f /app/app.js && echo "✅ app.js encontrado" || echo "❌ app.js NÃO encontrado" && \
-    test -f /app/package.json && echo "✅ package.json encontrado" || echo "❌ package.json NÃO encontrado" && \
+    echo "📂 Conteúdo da pasta /app/src:" && \
+    ls -la /app/src/ 2>/dev/null || echo "❌ Pasta /app/src NÃO encontrada" && \
     echo "" && \
-    echo "📂 Verificando pastas:" && \
+    echo "📄 Verificando arquivos principais:" && \
+    test -f /app/src/app.js && echo "✅ /app/src/app.js ENCONTRADO" || echo "❌ /app/src/app.js NÃO encontrado" && \
+    test -f /app/package.json && echo "✅ /app/package.json ENCONTRADO" || echo "❌ /app/package.json NÃO encontrado" && \
+    echo "" && \
+    echo "📂 Verificando outras pastas:" && \
     test -d /app/routes && echo "✅ pasta routes/ encontrada" || echo "❌ pasta routes/ NÃO encontrada" && \
     test -d /app/services && echo "✅ pasta services/ encontrada" || echo "❌ pasta services/ NÃO encontrada" && \
     test -d /app/utils && echo "✅ pasta utils/ encontrada" || echo "❌ pasta utils/ NÃO encontrada" && \
     test -d /app/middleware && echo "✅ pasta middleware/ encontrada" || echo "❌ pasta middleware/ NÃO encontrada" && \
     echo "" && \
-    echo "📋 Verificando módulos críticos:" && \
-    test -d /app/node_modules/express && echo "✅ Express instalado" || echo "❌ Express FALTANDO" && \
-    test -d /app/node_modules/puppeteer && echo "✅ Puppeteer instalado" || echo "❌ Puppeteer FALTANDO" && \
-    test -d /app/node_modules/cors && echo "✅ CORS instalado" || echo "❌ CORS FALTANDO" && \
-    test -d /app/node_modules/winston && echo "✅ Winston instalado" || echo "❌ Winston FALTANDO" && \
+    echo "🔍 Procurando ALL arquivos .js:" && \
+    find /app -name "*.js" -type f 2>/dev/null | head -10 && \
     echo "" && \
-    echo "📦 Total de pacotes: $(ls /app/node_modules | wc -l)" && \
+    echo "📄 Se src/app.js existe, mostrar início:" && \
+    if [ -f /app/src/app.js ]; then head -10 /app/src/app.js; fi && \
     echo "========================================="
 
 # ===============================================================================
 # CONFIGURAÇÕES FINAIS
 # ===============================================================================
 
-# Definir permissões corretas
+# Permissões
 RUN chown -R nodeuser:nodeuser /app
-
-# Mudança para usuário não-root (segurança)
 USER nodeuser
 
-# Configurações de runtime
+# Variáveis de runtime
 ENV PORT=8080
 ENV HOST=0.0.0.0
 ENV NODE_OPTIONS="--max-old-space-size=2048"
 
-# Exposição da porta
+# Expor porta
 EXPOSE 8080
 
 # Health check
@@ -160,7 +119,8 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
     CMD curl -f http://localhost:8080/health || exit 1
 
 # ===============================================================================
-# COMANDO DE INICIALIZAÇÃO
+# COMANDO DE INICIALIZAÇÃO CORRETO
 # ===============================================================================
 
-CMD ["node", "app.js"]
+# Usar src/app.js em vez de app.js
+CMD ["node", "src/app.js"]
