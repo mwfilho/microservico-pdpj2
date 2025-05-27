@@ -1,5 +1,11 @@
-const puppeteer = require('puppeteer');
-const logger = require('../utils/logger');
+const puppeteer = require('puppeteer-extra');
+const StealthPlugin = require('puppeteer-extra-plugin-stealth');
+const { createLogger } = require('../utils/logger');
+
+// Adiciona o plugin stealth ao puppeteer para evitar detecção
+puppeteer.use(StealthPlugin());
+
+const logger = createLogger('PDPJAuthService');
 
 class PDPJAuthService {
   constructor() {
@@ -13,11 +19,24 @@ class PDPJAuthService {
       logger.info('Browser inicializado com sucesso');
       
       browser = await puppeteer.launch({
-        args: ['--no-sandbox', '--disable-setuid-sandbox'],
+        args: [
+          '--no-sandbox', 
+          '--disable-setuid-sandbox',
+          '--disable-dev-shm-usage',
+          '--disable-accelerated-2d-canvas',
+          '--disable-gpu',
+          '--window-size=1920x1080'
+        ],
         headless: true
       });
       
       const page = await browser.newPage();
+      
+      // Configuração para parecer mais com um navegador real
+      await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+      await page.setExtraHTTPHeaders({
+        'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7'
+      });
       
       // Habilita interceptação de requisições para capturar o token
       await page.setRequestInterception(true);
@@ -35,13 +54,16 @@ class PDPJAuthService {
       });
       
       logger.info('🚀 Iniciando autenticação para usuário:');
+      
       logger.info('🌐 Navegando para URL:');
       
       // Acessa a página de login
       await page.goto(this.baseUrl, { waitUntil: 'networkidle2' });
       
       logger.info('✅ Página carregada com sucesso!');
+      
       logger.info('📊 Status HTTP:');
+      
       logger.info('🌐 URL atual:');
       
       // Aguarda um pouco para ter certeza que a página carregou completamente
@@ -63,19 +85,22 @@ class PDPJAuthService {
       const userSelector = '#username';
       const passSelector = '#password';
       
-      logger.info('✅ Campo username encontrado com seletor:');
-      logger.info('✅ Campo password encontrado com seletor:');
+      logger.info('✅ Campo username encontrado com seletor:', userSelector);
+      
+      logger.info('✅ Campo password encontrado com seletor:', passSelector);
       
       // Preenche as credenciais
       logger.info('📝 Preenchendo credenciais...');
+      
       await page.type(userSelector, username);
       await page.type(passSelector, password);
+      
       logger.info('✅ Credenciais preenchidas');
       
       // Identifica o botão de login
       const loginButtonSelector = 'button[type="submit"]';
       
-      logger.info('✅ Botão login encontrado com seletor:');
+      logger.info('✅ Botão login encontrado com seletor:', loginButtonSelector);
       
       // Tenta clicar no botão de login com vários métodos
       logger.info('🔘 Tentando clique robusto em: Botão de login (button[type="submit"])');
@@ -93,6 +118,7 @@ class PDPJAuthService {
       
       if (!isVisible) {
         logger.info('🔄 Tentando scroll + clique...');
+        
         try {
           await page.evaluate((selector) => {
             const button = document.querySelector(selector);
@@ -106,6 +132,7 @@ class PDPJAuthService {
         }
         
         logger.info('🔄 Tentando JavaScript click...');
+        
         await page.evaluate((selector) => {
           const buttons = document.querySelectorAll(selector);
           if (buttons.length > 0) {
@@ -114,6 +141,7 @@ class PDPJAuthService {
           }
           return false;
         }, loginButtonSelector);
+        
         logger.info('✅ JavaScript click funcionou!');
       } else {
         await page.click(loginButtonSelector);
@@ -128,20 +156,29 @@ class PDPJAuthService {
       
       // Verifica URL atual para entender o estado do login
       const currentUrl = page.url();
-      logger.info('🎯 Resultado do login:', { status: 'redirected', url: currentUrl });
-      logger.info('🌐 URL após login:', { url: currentUrl });
+      logger.info('🎯 Resultado do login:', {
+        status: 'redirected',
+        url: currentUrl
+      });
+      
+      logger.info('🌐 URL após login:', {
+        url: currentUrl
+      });
       
       // ---- Fase 2: Se redirecionado para SSO Keycloak, preenche campos adicionais ----
       if (currentUrl.includes('sso.cloud.pje.jus.br') || currentUrl.includes('auth/realms/pje')) {
         logger.info('🔄 Redirecionado para SSO Keycloak');
         
+        // Aguarda carregamento da página de SSO
+        await page.waitForTimeout(2000);
+        
         // Busca por campos adicionais e os preenche
-        const fields = await page.evaluate(() => {
+        const missingFields = await page.evaluate(() => {
           const result = [];
           const inputs = document.querySelectorAll('input');
           
           for (const input of inputs) {
-            if (input.required && !input.value) {
+            if ((input.required || input.getAttribute('aria-required') === 'true') && !input.value) {
               result.push({
                 name: input.name,
                 type: input.type,
@@ -153,56 +190,70 @@ class PDPJAuthService {
           return result;
         });
         
-        if (fields.length > 0) {
-          logger.info('📝 Campos adicionais encontrados:', { fields });
+        if (missingFields.length > 0) {
+          logger.warn('📋 Campos obrigatórios não preenchidos:', {
+            missingFields
+          });
           
-          // Preenche campo login se necessário
-          const loginField = fields.find(f => f.name === 'login' || f.type === 'number');
+          // Preenche campo login/número se necessário (CPF ou outro identificador)
+          const loginField = missingFields.find(f => 
+            f.name === 'login' || 
+            f.type === 'number' || 
+            f.name.includes('cpf') || 
+            f.name.includes('document')
+          );
+          
           if (loginField) {
             await page.type(`input[name="${loginField.name}"]`, username);
-            logger.info('✅ Campo login preenchido com username');
+            logger.info('✅ Campo login preenchido com username/CPF');
           }
           
           // Preenche campo email se necessário
-          const emailField = fields.find(f => f.name === 'email' || f.type === 'email');
+          const emailField = missingFields.find(f => 
+            f.name === 'email' || 
+            f.type === 'email' || 
+            f.name.includes('mail')
+          );
+          
           if (emailField) {
             // Gera um email baseado no username
             const email = `${username}@exemplo.com.br`;
             await page.type(`input[name="${emailField.name}"]`, email);
             logger.info('✅ Campo email preenchido com email gerado');
+            
+            // Se houver campo de confirmação de email
+            const confirmEmailField = missingFields.find(f => 
+              f.name === 'email_confirm' || 
+              f.name.includes('confirma') || 
+              f.name.includes('confirm')
+            );
+            
+            if (confirmEmailField) {
+              await page.type(`input[name="${confirmEmailField.name}"]`, email);
+              logger.info('✅ Campo confirmação de email preenchido');
+            }
           }
           
           // Procura por botão de continuação/submit na página do SSO
-          const continueButton = await page.evaluate(() => {
-            const buttons = [
-              ...document.querySelectorAll('button[type="submit"]'),
-              ...document.querySelectorAll('input[type="submit"]'),
-              ...document.querySelectorAll('button.confirm'),
-              ...document.querySelectorAll('button.btn-primary')
-            ];
-            
-            return buttons.length > 0 ? true : false;
-          });
+          const submitButton = await page.$('button[type="submit"], input[type="submit"], .confirm, .btn-primary');
           
-          if (continueButton) {
+          if (submitButton) {
             logger.info('🔘 Clicando no botão de continuação do SSO');
             
-            await page.evaluate(() => {
-              const buttons = [
-                ...document.querySelectorAll('button[type="submit"]'),
-                ...document.querySelectorAll('input[type="submit"]'),
-                ...document.querySelectorAll('button.confirm'),
-                ...document.querySelectorAll('button.btn-primary')
-              ];
-              
-              if (buttons.length > 0) {
-                buttons[0].click();
-              }
-            });
+            await submitButton.click();
             
             // Aguarda navegação após clicar no botão
             await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 10000 })
               .catch(() => logger.warn('⚠️ Nenhum redirecionamento detectado após confirmação do SSO'));
+          } else {
+            // Se não encontrou um botão, tenta enviar o formulário diretamente
+            await page.evaluate(() => {
+              const form = document.querySelector('form');
+              if (form) form.submit();
+            });
+            
+            await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 10000 })
+              .catch(() => {});
           }
         }
       }
@@ -210,7 +261,9 @@ class PDPJAuthService {
       // ---- Fase 3: Verificação do login e captura do token ----
       // Verifica URL atual após os passos de autenticação
       const finalUrl = page.url();
-      logger.info('🔍 URL final após autenticação:', { url: finalUrl });
+      logger.info('🔍 URL final após autenticação:', {
+        url: finalUrl
+      });
       
       // Se ainda não capturou o token via intercepção, tenta buscar no localStorage
       if (!token) {
@@ -271,28 +324,37 @@ class PDPJAuthService {
         }
       }
       
+      // Extrai URL atual como URL do sistema logado
+      const systemUrl = page.url();
+      
+      // Captura imagem da página como evidência (opcional)
+      try {
+        await page.screenshot({ path: `/tmp/auth_${username}_${Date.now()}.png` });
+        logger.info('📸 Screenshot capturado como evidência');
+      } catch (e) {
+        logger.warn('⚠️ Não foi possível capturar screenshot:', e.message);
+      }
+      
       // Verifica o resultado final da autenticação
       if (token) {
         logger.info('🎉 Autenticação bem-sucedida! Token JWT obtido.');
+        
         return { 
           success: true,
           token,
-          tokenType: 'Bearer'
+          tokenType: 'Bearer',
+          systemUrl
         };
       } else {
-        logger.error('❌ Não foi possível obter token. Autenticação falhou.');
-        return { 
-          success: false, 
-          error: 'Não foi possível obter token de autenticação'
-        };
+        logger.error('❌ Erro durante autenticação: Não foi possível obter token');
+        
+        throw new Error('Não foi possível obter token de autenticação');
       }
       
     } catch (error) {
       logger.error('❌ Erro durante autenticação:', error.message);
-      return { 
-        success: false, 
-        error: `Erro durante processo de autenticação: ${error.message}`
-      };
+      
+      throw error;
     } finally {
       if (browser) {
         await browser.close();
