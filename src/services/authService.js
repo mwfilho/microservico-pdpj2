@@ -21,7 +21,7 @@ class PDPJAuthService {
     try {
       this.browser = await puppeteer.launch({
         headless: this.config.headless,
-        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium', // ← CRUCIAL
+        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
         args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
@@ -78,6 +78,11 @@ class PDPJAuthService {
     });
   }
 
+  // ✅ FUNÇÃO delay() NO LOCAL CORRETO (MÉTODO INDEPENDENTE)
+  async delay(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
   async authenticate(username, password) {
     try {
       this.logger.info('Iniciando autenticação para usuário:', username);
@@ -92,8 +97,8 @@ class PDPJAuthService {
       this.logger.info('=== INICIANDO DEBUG ===');
       this.logger.info('URL atual:', this.page.url());
       
-      // Aguardar página carregar completamente
-      await this.page.waitForTimeout(5000);
+      // Aguardar página carregar completamente (USANDO delay CORRETAMENTE)
+      await this.delay(5000);
       
       // Verificar título da página
       const title = await this.page.title();
@@ -104,7 +109,7 @@ class PDPJAuthService {
       this.logger.info('URL após navegação:', currentUrl);
       
       // Tentar encontrar campos de input
-      const inputs = await this.page.$eval('input', els => 
+      const inputs = await this.page.$$eval('input', els => 
         els.map(el => ({
           name: el.name,
           id: el.id,
