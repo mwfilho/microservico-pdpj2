@@ -1,4 +1,7 @@
-FROM node:18-slim
+FROM node:20-slim
+
+# Atualizar npm para versão mais recente
+RUN npm install -g npm@11.4.1
 
 # Instalar dependências do Puppeteer
 RUN apt-get update && apt-get install -y \
