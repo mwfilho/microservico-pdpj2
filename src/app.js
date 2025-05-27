@@ -13,6 +13,9 @@ const puppeteerManager = require('./services/puppeteerManager');
 const app = express();
 const logger = createLogger('App');
 
+//
+app.set('trust proxy', true);
+
 // Segurança
 app.use(helmet());
 app.use(cors({
